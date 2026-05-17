@@ -1,0 +1,11 @@
+# compiled binaries
+/bench
+/api
+/buildindex
+
+# local index files (large, built inside Docker)
+*.ivf.bin
+*.hnsw.bin
+
+# test data
+/tmp/
