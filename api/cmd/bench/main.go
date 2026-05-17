@@ -2,10 +2,10 @@
 //
 // Usage:
 //
-//	bench -url http://localhost:9999 -n 5000 -c 10 -probes 20,30,50
+//	bench -url http://localhost:9999 -n 5000 -c 10
+//	bench -url http://localhost:9999 -n 5000 -c 6 -label "2api-c6"
 //
-// It generates synthetic but varied transaction requests, reports p50/p95/p99/p999,
-// and can sweep multiple IVF_PROBES values if the server is restarted between runs.
+// Reports p50/p90/p95/p99/p99.9, mean, min, max, and throughput (RPS).
 package main
 
 import (
@@ -28,6 +28,7 @@ func main() {
 	n := flag.Int("n", 5000, "total number of requests")
 	c := flag.Int("c", 10, "concurrent workers")
 	warmup := flag.Int("warmup", 200, "warmup requests (excluded from stats)")
+	label := flag.String("label", "", "label for this run (printed in header)")
 	flag.Parse()
 
 	client := &http.Client{
@@ -40,6 +41,10 @@ func main() {
 	// Wait for the server to be ready.
 	waitReady(*url+"/ready", client)
 
+	if *label != "" {
+		fmt.Printf("\n=== %s ===\n", *label)
+	}
+
 	rng := rand.New(rand.NewSource(42))
 	requests := makeRequests(*n+*warmup, rng)
 
@@ -47,9 +52,9 @@ func main() {
 	runBatch(client, *url+"/fraud-score", requests[:*warmup], *c, true)
 
 	fmt.Printf("benchmarking %d requests with concurrency %d…\n", *n, *c)
-	latencies := runBatch(client, *url+"/fraud-score", requests[*warmup:], *c, false)
+	latencies, elapsed := runBatch(client, *url+"/fraud-score", requests[*warmup:], *c, false)
 
-	printStats(latencies)
+	printStats(latencies, elapsed)
 }
 
 func waitReady(url string, client *http.Client) {
@@ -68,7 +73,7 @@ func waitReady(url string, client *http.Client) {
 	}
 }
 
-func runBatch(client *http.Client, url string, reqs [][]byte, concurrency int, silent bool) []time.Duration {
+func runBatch(client *http.Client, url string, reqs [][]byte, concurrency int, silent bool) ([]time.Duration, time.Duration) {
 	latencies := make([]time.Duration, 0, len(reqs))
 	var mu sync.Mutex
 	var errors atomic.Int64
@@ -79,15 +84,16 @@ func runBatch(client *http.Client, url string, reqs [][]byte, concurrency int, s
 	}
 	close(queue)
 
+	start := time.Now()
 	var wg sync.WaitGroup
 	for i := 0; i < concurrency; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for body := range queue {
-				start := time.Now()
+				t0 := time.Now()
 				resp, err := client.Post(url, "application/json", bytes.NewReader(body))
-				elapsed := time.Since(start)
+				lat := time.Since(t0)
 
 				if err != nil || resp.StatusCode != 200 {
 					errors.Add(1)
@@ -100,20 +106,21 @@ func runBatch(client *http.Client, url string, reqs [][]byte, concurrency int, s
 				resp.Body.Close()
 
 				mu.Lock()
-				latencies = append(latencies, elapsed)
+				latencies = append(latencies, lat)
 				mu.Unlock()
 			}
 		}()
 	}
 	wg.Wait()
+	elapsed := time.Since(start)
 
 	if !silent && errors.Load() > 0 {
 		fmt.Printf("  errors: %d\n", errors.Load())
 	}
-	return latencies
+	return latencies, elapsed
 }
 
-func printStats(latencies []time.Duration) {
+func printStats(latencies []time.Duration, elapsed time.Duration) {
 	if len(latencies) == 0 {
 		fmt.Println("no successful requests")
 		return
@@ -146,6 +153,8 @@ func printStats(latencies []time.Duration) {
 		return strings.Repeat("█", width)
 	}
 
+	rps := float64(n) / elapsed.Seconds()
+
 	fmt.Printf("\n%-8s %8s\n", "percentile", "latency")
 	fmt.Println(strings.Repeat("─", 40))
 	for _, p := range []float64{50, 90, 95, 99, 99.9} {
@@ -157,6 +166,7 @@ func printStats(latencies []time.Duration) {
 	fmt.Printf("%-8s %8.3f ms\n", "min", float64(latencies[0].Microseconds())/1000.0)
 	fmt.Printf("%-8s %8.3f ms\n", "max", float64(latencies[n-1].Microseconds())/1000.0)
 	fmt.Printf("%-8s %8d\n", "n", n)
+	fmt.Printf("%-8s %8.1f req/s  (wall: %s)\n", "RPS", rps, elapsed.Round(time.Millisecond))
 }
 
 // MCC codes from mcc_risk.json

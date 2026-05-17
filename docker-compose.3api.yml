@@ -1,16 +1,18 @@
-name: rinha-2026
+name: rinha-2026-3api
 
 services:
   haproxy:
     image: haproxy:3.0-alpine
     volumes:
-      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ./haproxy.3api.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     ports:
       - "9999:9999"
     depends_on:
       api1:
         condition: service_healthy
       api2:
+        condition: service_healthy
+      api3:
         condition: service_healthy
     deploy:
       resources:
@@ -26,7 +28,7 @@ services:
       SEARCHER: ivf
       IVF_PROBES: "5"
       GOGC: "off"
-      GOMEMLIMIT: "120MiB"
+      GOMEMLIMIT: "75MiB"
       GOMAXPROCS: "1"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:9999/ready"]
@@ -37,8 +39,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.45"
-          memory: "160MB"
+          cpus: "0.30"
+          memory: "100MB"
     networks:
       - backend
 
@@ -48,7 +50,7 @@ services:
       SEARCHER: ivf
       IVF_PROBES: "5"
       GOGC: "off"
-      GOMEMLIMIT: "120MiB"
+      GOMEMLIMIT: "75MiB"
       GOMAXPROCS: "1"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:9999/ready"]
@@ -59,8 +61,30 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "0.45"
-          memory: "160MB"
+          cpus: "0.30"
+          memory: "100MB"
+    networks:
+      - backend
+
+  api3:
+    image: fandangolas/rinha-2026-api:latest
+    environment:
+      SEARCHER: ivf
+      IVF_PROBES: "5"
+      GOGC: "off"
+      GOMEMLIMIT: "75MiB"
+      GOMAXPROCS: "1"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9999/ready"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.30"
+          memory: "100MB"
     networks:
       - backend
 
