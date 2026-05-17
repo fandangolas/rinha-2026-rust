@@ -1,0 +1,6 @@
+# Source code and build artifacts live on the main branch, not here.
+*
+!docker-compose.yml
+!haproxy.cfg
+!info.json
+!.gitignore
