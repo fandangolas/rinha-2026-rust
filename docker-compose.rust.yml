@@ -1,0 +1,73 @@
+name: rinha-2026-rust
+
+# Same CFS settings as the Go setup: 2ms period, 50% quota → max stall 1ms.
+# Rust has no GC, so GOGC/GOMEMLIMIT/GOMAXPROCS are irrelevant.
+# TOKIO_WORKER_THREADS=1 limits the async runtime to 1 OS thread,
+# equivalent to GOMAXPROCS=1 — minimises context-switch overhead under
+# fractional CPU quota.
+# Total: 0.50 + 0.50 + 0.50 = 1.50 CPU (challenge limit).
+
+services:
+  haproxy:
+    image: haproxy:3.0-alpine
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "9999:9999"
+    depends_on:
+      api1:
+        condition: service_healthy
+      api2:
+        condition: service_healthy
+    cpu_period: 2000
+    cpu_quota: 1000
+    deploy:
+      resources:
+        limits:
+          memory: "25MB"
+    networks:
+      - backend
+
+  api1:
+    image: fandangolas/rinha-2026-api-rust:latest
+    environment:
+      IVF_PROBES: "5"
+      TOKIO_WORKER_THREADS: "1"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9999/ready"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+      start_period: 10s
+    cpu_period: 2000
+    cpu_quota: 1000
+    deploy:
+      resources:
+        limits:
+          memory: "160MB"
+    networks:
+      - backend
+
+  api2:
+    image: fandangolas/rinha-2026-api-rust:latest
+    environment:
+      IVF_PROBES: "5"
+      TOKIO_WORKER_THREADS: "1"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9999/ready"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+      start_period: 10s
+    cpu_period: 2000
+    cpu_quota: 1000
+    deploy:
+      resources:
+        limits:
+          memory: "160MB"
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge
