@@ -36,7 +36,7 @@ RUN /buildindex \
       -centroids 5000                \
       -sample    0.1                 \
       -iters     20                  \
-      -probes    10
+      -probes    5
 
 # ---- Stage 3: build the API binary ----------------------------------------
 FROM golang:1.23-alpine AS api-builder

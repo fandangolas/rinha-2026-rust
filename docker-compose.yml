@@ -24,7 +24,7 @@ services:
     image: fandangolas/rinha-2026-api:latest
     environment:
       SEARCHER: ivf
-      IVF_PROBES: "10"
+      IVF_PROBES: "5"
       GOGC: "off"
       GOMEMLIMIT: "120MiB"
     healthcheck:
@@ -45,7 +45,7 @@ services:
     image: fandangolas/rinha-2026-api:latest
     environment:
       SEARCHER: ivf
-      IVF_PROBES: "10"
+      IVF_PROBES: "5"
       GOGC: "off"
       GOMEMLIMIT: "120MiB"
     healthcheck:
