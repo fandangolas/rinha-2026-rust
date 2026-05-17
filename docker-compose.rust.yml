@@ -31,8 +31,9 @@ services:
   api1:
     image: fandangolas/rinha-2026-api-rust:latest
     environment:
-      IVF_PROBES: "5"
-      TOKIO_WORKER_THREADS: "1"
+      IVF_PROBES: "${IVF_PROBES:-5}"
+      INDEX_PATH: "${INDEX_PATH:-/data/index.ivf.bin}"
+      TOKIO_WORKER_THREADS: "${TOKIO_WORKER_THREADS:-1}"
     volumes:
       - /tmp/rinha-data:/data:ro
     healthcheck:
@@ -53,8 +54,9 @@ services:
   api2:
     image: fandangolas/rinha-2026-api-rust:latest
     environment:
-      IVF_PROBES: "5"
-      TOKIO_WORKER_THREADS: "1"
+      IVF_PROBES: "${IVF_PROBES:-5}"
+      INDEX_PATH: "${INDEX_PATH:-/data/index.ivf.bin}"
+      TOKIO_WORKER_THREADS: "${TOKIO_WORKER_THREADS:-1}"
     volumes:
       - /tmp/rinha-data:/data:ro
     healthcheck:
