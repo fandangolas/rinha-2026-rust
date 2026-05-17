@@ -7,5 +7,8 @@
 *.ivf.bin
 *.hnsw.bin
 
+# local dataset copy used for Docker builds (44MB index + json fixtures)
+/data/
+
 # test data
 /tmp/
