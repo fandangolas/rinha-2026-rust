@@ -1,0 +1,68 @@
+name: rinha-2026-rust
+
+# Total: 0.05 + 0.475 + 0.475 = 1.00 CPU  |  25 + 160 + 160 = 345 MB
+# CFS period=2ms minimises throttle stall to at most 1ms per window.
+# Optimal IVF config baked into image: 1k centroids, probes=3
+#   → p99 < 1ms at c=1, 100% decision accuracy, det_score=3000.
+
+services:
+  haproxy:
+    image: haproxy:3.0-alpine
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "9999:9999"
+    depends_on:
+      api1:
+        condition: service_healthy
+      api2:
+        condition: service_healthy
+    cpu_period: 2000
+    cpu_quota: 100
+    deploy:
+      resources:
+        limits:
+          cpus: "0.05"
+          memory: "25MB"
+    networks:
+      - backend
+
+  api1:
+    image: fandangolas/rinha-2026-api-rust:latest
+    healthcheck:
+      test: ["CMD", "/bin/bash", "-c", "exec 3<>/dev/tcp/localhost/9999 && printf 'GET /ready HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+      start_period: 30s
+    cpu_period: 2000
+    cpu_quota: 950
+    deploy:
+      resources:
+        limits:
+          cpus: "0.475"
+          memory: "160MB"
+    networks:
+      - backend
+
+  api2:
+    image: fandangolas/rinha-2026-api-rust:latest
+    healthcheck:
+      test: ["CMD", "/bin/bash", "-c", "exec 3<>/dev/tcp/localhost/9999 && printf 'GET /ready HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+      start_period: 30s
+    cpu_period: 2000
+    cpu_quota: 950
+    deploy:
+      resources:
+        limits:
+          cpus: "0.475"
+          memory: "160MB"
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge
