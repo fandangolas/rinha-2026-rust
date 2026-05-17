@@ -1,5 +1,10 @@
 name: rinha-2026-3api
 
+# Short CFS period eliminates the throttle-stall cliff.
+# HAProxy 50%: period=2ms, quota=1ms → max stall 1ms.
+# API     33%: period=3ms, quota=1ms → max stall 2ms.
+# Total: 0.50 + 3×0.33 = 1.49 CPU (within 1.5 CPU challenge limit).
+
 services:
   haproxy:
     image: haproxy:3.0-alpine
@@ -14,10 +19,11 @@ services:
         condition: service_healthy
       api3:
         condition: service_healthy
+    cpu_period: 2000
+    cpu_quota: 1000
     deploy:
       resources:
         limits:
-          cpus: "0.1"
           memory: "25MB"
     networks:
       - backend
@@ -28,7 +34,7 @@ services:
       SEARCHER: ivf
       IVF_PROBES: "5"
       GOGC: "off"
-      GOMEMLIMIT: "75MiB"
+      GOMEMLIMIT: "45MiB"
       GOMAXPROCS: "1"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:9999/ready"]
@@ -36,10 +42,11 @@ services:
       timeout: 2s
       retries: 10
       start_period: 10s
+    cpu_period: 3000
+    cpu_quota: 1000
     deploy:
       resources:
         limits:
-          cpus: "0.30"
           memory: "100MB"
     networks:
       - backend
@@ -50,7 +57,7 @@ services:
       SEARCHER: ivf
       IVF_PROBES: "5"
       GOGC: "off"
-      GOMEMLIMIT: "75MiB"
+      GOMEMLIMIT: "45MiB"
       GOMAXPROCS: "1"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:9999/ready"]
@@ -58,10 +65,11 @@ services:
       timeout: 2s
       retries: 10
       start_period: 10s
+    cpu_period: 3000
+    cpu_quota: 1000
     deploy:
       resources:
         limits:
-          cpus: "0.30"
           memory: "100MB"
     networks:
       - backend
@@ -72,7 +80,7 @@ services:
       SEARCHER: ivf
       IVF_PROBES: "5"
       GOGC: "off"
-      GOMEMLIMIT: "75MiB"
+      GOMEMLIMIT: "45MiB"
       GOMAXPROCS: "1"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:9999/ready"]
@@ -80,10 +88,11 @@ services:
       timeout: 2s
       retries: 10
       start_period: 10s
+    cpu_period: 3000
+    cpu_quota: 1000
     deploy:
       resources:
         limits:
-          cpus: "0.30"
           memory: "100MB"
     networks:
       - backend

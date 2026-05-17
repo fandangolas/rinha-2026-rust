@@ -1,5 +1,10 @@
 name: rinha-2026
 
+# Short CFS period eliminates the throttle-stall cliff.
+# Linux minimum cpu_quota = 1ms, so period = 1ms / fraction.
+# At 50% each component gets 1ms per 2ms window → max stall = 1ms.
+# Total: 0.50 + 0.50 + 0.50 = 1.50 CPU (challenge limit).
+
 services:
   haproxy:
     image: haproxy:3.0-alpine
@@ -12,10 +17,11 @@ services:
         condition: service_healthy
       api2:
         condition: service_healthy
+    cpu_period: 2000
+    cpu_quota: 1000
     deploy:
       resources:
         limits:
-          cpus: "0.1"
           memory: "25MB"
     networks:
       - backend
@@ -34,10 +40,11 @@ services:
       timeout: 2s
       retries: 10
       start_period: 10s
+    cpu_period: 2000
+    cpu_quota: 1000
     deploy:
       resources:
         limits:
-          cpus: "0.45"
           memory: "160MB"
     networks:
       - backend
@@ -56,10 +63,11 @@ services:
       timeout: 2s
       retries: 10
       start_period: 10s
+    cpu_period: 2000
+    cpu_quota: 1000
     deploy:
       resources:
         limits:
-          cpus: "0.45"
           memory: "160MB"
     networks:
       - backend
