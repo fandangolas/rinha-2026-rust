@@ -11,6 +11,7 @@ import (
 	"github.com/fandangolas/rinha-de-backend-2026/api/internal/search"
 	"github.com/fandangolas/rinha-de-backend-2026/api/internal/search/hnsw"
 	"github.com/fandangolas/rinha-de-backend-2026/api/internal/search/ivf"
+	"github.com/fandangolas/rinha-de-backend-2026/api/internal/search/uds"
 	"github.com/fandangolas/rinha-de-backend-2026/api/internal/vectorize"
 	"github.com/valyala/fasthttp"
 )
@@ -53,6 +54,25 @@ func mustLoadSearcher() search.Searcher {
 			log.Fatalf("hnsw: load %s: %v", path, err)
 		}
 		return s
+
+	case "uds":
+		// Load IVF index locally and serve it over a Unix domain socket.
+		// The HTTP handler becomes a UDS client, adding one socket round-trip
+		// per query. Used to benchmark IPC overhead vs direct mmap access.
+		path := env("INDEX_PATH", "/data/index.ivf.bin")
+		probes := mustInt(env("IVF_PROBES", "20"))
+		backend, err := ivf.Load(path, probes)
+		if err != nil {
+			log.Fatalf("uds: load ivf %s: %v", path, err)
+		}
+		socketPath := env("UDS_PATH", "/tmp/search.sock")
+		srv, err := uds.NewServer(socketPath, backend)
+		if err != nil {
+			log.Fatalf("uds: listen %s: %v", socketPath, err)
+		}
+		go srv.Serve()
+		log.Printf("uds server listening on %s", socketPath)
+		return uds.NewClient(socketPath)
 
 	default:
 		log.Fatalf("unknown SEARCHER %q — must be 'ivf' or 'hnsw'", kind)
