@@ -1,0 +1,7 @@
+run,date,strategy,instances,cpu_per_instance,memory_mb,gomaxprocs,centroids,probes,c,n_bench,warmup,p50_ms,p90_ms,p95_ms,p99_ms,p999_ms,mean_ms,rps,recall_n,fn,fp,det_score_est
+1,2026-05-17,"Baseline: IVF 5000 centroids · loop distInt8 · GOMAXPROCS=host · probes=20",2,0.45,160,host,5000,20,1,,,,,,0.731,,,,,,,
+2,2026-05-17,"unrolled distInt8 (14-dim fully unrolled + BCE hint + unsafe ptr advance per vector)",2,0.45,160,host,5000,20,1,,,,,,0.545,,,,,,,
+3,2026-05-17,"probes=1 · c=3 (recall-only — bench latency not measured)",2,0.45,160,host,5000,1,3,4000,500,,,,,,,,5000,2,5,+1936
+4,2026-05-17,"probes=2",2,0.45,160,host,5000,2,3,4000,500,,,,,,,,5000,0,2,+2857
+5,2026-05-17,"probes=5 ← current",2,0.45,160,host,5000,5,3,4000,500,0.31,,,0.81,,,,5000,0,1,+2910
+6,2026-05-17,"probes=10",2,0.45,160,host,5000,10,3,4000,500,0.35,,,0.87,,,,5000,0,0,+3000
