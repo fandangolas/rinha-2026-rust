@@ -1,0 +1,5 @@
+rust-api/target/
+*/target/
+*.bin
+data/
+tmp/

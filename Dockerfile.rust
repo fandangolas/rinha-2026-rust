@@ -1,9 +1,15 @@
+# Stage 1: compile from source (fully offline via vendored deps)
 FROM rust:slim AS builder
 WORKDIR /app
 COPY rust-api/ .
-RUN cargo build --release --locked
+RUN cargo build --release --locked --offline
 
+# Stage 2: minimal runtime image
 FROM debian:bookworm-slim
 COPY --from=builder /app/target/release/rinha-api /usr/local/bin/rinha-api
 EXPOSE 9999
 CMD ["rinha-api"]
+
+# ---- local fast build (pre-compiled binary) ----
+# If the above fails due to no network, build the image with:
+#   docker build -f Dockerfile.rust.local -t fandangolas/rinha-2026-api-rust:latest .
