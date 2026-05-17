@@ -27,15 +27,16 @@ RUN mkdir -p /data && \
          -o /data/normalization.json
 
 # Build the IVF index.
-# Tune -centroids and -probes here; they are also overridable at runtime
-# via the IVF_PROBES env var without rebuilding.
+# 5000 centroids → ~600 vectors/cluster → scanning probes=10 clusters covers
+# ~6000 vectors per query, giving good recall at low latency.
+# -probes sets the default baked into the index header; override at runtime via IVF_PROBES.
 RUN /buildindex \
       -in   /data/references.json.gz \
       -out  /data/index.ivf.bin      \
-      -centroids 1000                \
+      -centroids 5000                \
       -sample    0.1                 \
       -iters     20                  \
-      -probes    20
+      -probes    10
 
 # ---- Stage 3: build the API binary ----------------------------------------
 FROM golang:1.23-alpine AS api-builder

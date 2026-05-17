@@ -150,7 +150,11 @@ var (
 func (s *Searcher) Search(query search.Vector, k int) ([]search.Neighbor, error) {
 	// --- Step 1: find the nearest centroids (float32 distance) ---
 	cds := centDistPool.Get().([]centDist)
-	cds = cds[:s.numCents]
+	if cap(cds) < s.numCents {
+		cds = make([]centDist, s.numCents)
+	} else {
+		cds = cds[:s.numCents]
+	}
 	for i := 0; i < s.numCents; i++ {
 		c := s.cents[i*dims : i*dims+dims]
 		var d float32
@@ -181,12 +185,20 @@ func (s *Searcher) Search(query search.Vector, k int) ([]search.Neighbor, error)
 	for _, cd := range probeList {
 		start := s.offsets[cd.idx]
 		end := s.offsets[cd.idx+1]
+		count := int(end - start)
+		if count == 0 {
+			continue
+		}
 
-		for vi := start; vi < end; vi++ {
-			base := int(vi) * dims
-			vec := s.vecs[base : base+dims]
-			d := distInt8(vec, qInt8)
+		// Use a raw pointer that advances by dims bytes each iteration.
+		// This avoids a multiply and a slice-header allocation per vector.
+		vecBase := unsafe.Pointer(&s.vecs[int(start)*dims])
 
+		for i := 0; i < count; i++ {
+			d := distInt8Ptr((*int8)(vecBase), qInt8)
+			vecBase = unsafe.Add(vecBase, dims)
+
+			vi := start + uint64(i)
 			if len(cands) < k {
 				cands = append(cands, candidate{d, s.labels[vi] == 1})
 				if len(cands) == k {
@@ -226,15 +238,29 @@ func quantize(f float32) int8 {
 	return int8(v)
 }
 
-// distInt8 computes the squared Euclidean distance between a stored int8 vector
-// and a quantized int8 query. Uses int32 accumulator to avoid overflow.
-func distInt8(stored []int8, query [dims]int8) int32 {
-	var sum int32
-	for i := 0; i < dims; i++ {
-		diff := int32(stored[i]) - int32(query[i])
-		sum += diff * diff
-	}
-	return sum
+// distInt8Ptr computes the squared Euclidean distance between two 14-dim int8
+// vectors. The loop is fully unrolled for dims=14 so the compiler can pipeline
+// all 14 multiply-accumulate pairs without loop overhead or bounds checks.
+// stored must point to at least dims consecutive int8 values.
+func distInt8Ptr(stored *int8, query [dims]int8) int32 {
+	p := unsafe.Slice(stored, dims)
+	_ = p[dims-1] // bounds-check elimination for all subsequent p[i]
+	d0 := int32(p[0]) - int32(query[0])
+	d1 := int32(p[1]) - int32(query[1])
+	d2 := int32(p[2]) - int32(query[2])
+	d3 := int32(p[3]) - int32(query[3])
+	d4 := int32(p[4]) - int32(query[4])
+	d5 := int32(p[5]) - int32(query[5])
+	d6 := int32(p[6]) - int32(query[6])
+	d7 := int32(p[7]) - int32(query[7])
+	d8 := int32(p[8]) - int32(query[8])
+	d9 := int32(p[9]) - int32(query[9])
+	d10 := int32(p[10]) - int32(query[10])
+	d11 := int32(p[11]) - int32(query[11])
+	d12 := int32(p[12]) - int32(query[12])
+	d13 := int32(p[13]) - int32(query[13])
+	return d0*d0 + d1*d1 + d2*d2 + d3*d3 + d4*d4 + d5*d5 + d6*d6 +
+		d7*d7 + d8*d8 + d9*d9 + d10*d10 + d11*d11 + d12*d12 + d13*d13
 }
 
 // partialSortAsc rearranges cds so that cds[:n] contains the n smallest elements

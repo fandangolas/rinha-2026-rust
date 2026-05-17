@@ -22,6 +22,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"math"
 	"math/rand"
@@ -111,8 +112,11 @@ func readSample(path string, rate float64, rng *rand.Rand) ([][]float32, error) 
 	defer closeFn()
 
 	dec := json.NewDecoder(r)
+	if err := consumeArrayOpen(dec); err != nil {
+		return nil, err
+	}
 	var sample [][]float32
-	for {
+	for dec.More() {
 		var line refLine
 		if err := dec.Decode(&line); err != nil {
 			break
@@ -134,8 +138,11 @@ func assignAll(path string, centroids [][]float32, clusters [][]entry) (int, err
 	defer closeFn()
 
 	dec := json.NewDecoder(r)
+	if err := consumeArrayOpen(dec); err != nil {
+		return 0, err
+	}
 	total := 0
-	for {
+	for dec.More() {
 		var line refLine
 		if err := dec.Decode(&line); err != nil {
 			break
@@ -289,4 +296,17 @@ func writeUint64(w *bufio.Writer, v uint64) error {
 	binary.LittleEndian.PutUint64(buf[:], v)
 	_, err := w.Write(buf[:])
 	return err
+}
+
+// consumeArrayOpen reads the opening '[' token from a JSON array stream.
+// references.json.gz is a single JSON array, not NDJSON.
+func consumeArrayOpen(dec *json.Decoder) error {
+	tok, err := dec.Token()
+	if err != nil {
+		return fmt.Errorf("expected '[': %w", err)
+	}
+	if tok != json.Delim('[') {
+		return fmt.Errorf("expected '[', got %v", tok)
+	}
+	return nil
 }
