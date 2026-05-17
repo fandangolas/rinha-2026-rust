@@ -18,17 +18,13 @@ RUN apk add --no-cache curl
 
 COPY --from=builder-tool /buildindex /buildindex
 
-# Download reference data.
-# Set REFERENCES_URL, MCC_RISK_URL, NORM_URL as build args pointing to
-# wherever the challenge hosts the data files.
-ARG REFERENCES_URL
-ARG MCC_RISK_URL
-ARG NORM_URL
-
 RUN mkdir -p /data && \
-    curl -fsSL "${REFERENCES_URL}"  -o /data/references.json.gz && \
-    curl -fsSL "${MCC_RISK_URL}"    -o /data/mcc_risk.json      && \
-    curl -fsSL "${NORM_URL}"        -o /data/normalization.json
+    curl -fsSL "https://raw.githubusercontent.com/zanfranceschi/rinha-de-backend-2026/main/resources/references.json.gz" \
+         -o /data/references.json.gz && \
+    curl -fsSL "https://raw.githubusercontent.com/zanfranceschi/rinha-de-backend-2026/main/resources/mcc_risk.json" \
+         -o /data/mcc_risk.json && \
+    curl -fsSL "https://raw.githubusercontent.com/zanfranceschi/rinha-de-backend-2026/main/resources/normalization.json" \
+         -o /data/normalization.json
 
 # Build the IVF index.
 # Tune -centroids and -probes here; they are also overridable at runtime

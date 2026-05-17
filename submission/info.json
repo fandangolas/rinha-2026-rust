@@ -1,0 +1,10 @@
+{
+  "id": "fandangolas-go-ivf",
+  "description": "Go + IVF (Inverted File Index) with int8 quantization and mmap'd index",
+  "stack": {
+    "language": "Go",
+    "http": "fasthttp",
+    "vector_search": "IVF with int8 scalar quantization",
+    "load_balancer": "HAProxy"
+  }
+}

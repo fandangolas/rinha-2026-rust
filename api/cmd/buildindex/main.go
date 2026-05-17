@@ -7,7 +7,13 @@
 //
 // The tool runs in two passes:
 //  1. Sample ~10% of vectors → run k-means to find centroids.
-//  2. Full pass → assign every vector to its nearest centroid → write binary.
+//  2. Full pass → assign every vector to its nearest centroid,
+//     quantize to int8, and write the binary index.
+//
+// Memory budget at 3 M vectors, 1000 centroids:
+//   sample (10%): 300K × 14 × 4B  ≈  17 MB
+//   clusters:     3M   × 15B       ≈  45 MB  (int8 vec + bool)
+//   centroids:    1000 × 14 × 4B  ≈  56 KB
 package main
 
 import (
@@ -16,12 +22,10 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"flag"
-	"fmt"
 	"log"
 	"math"
 	"math/rand"
 	"os"
-	"sort"
 
 	"github.com/fandangolas/rinha-de-backend-2026/api/internal/search"
 	"github.com/fandangolas/rinha-de-backend-2026/api/internal/search/ivf"
@@ -54,6 +58,8 @@ func main() {
 	log.Printf("  k-means done")
 
 	// ---- Pass 2: assign all vectors and collect per-cluster data --------
+	// Vectors are quantized to int8 at this stage to keep memory ~45 MB
+	// rather than ~240 MB if stored as float32.
 	log.Printf("pass 2: assigning all vectors to clusters...")
 	clusters := make([][]entry, *numCentroids)
 	totalVecs, err := assignAll(*inPath, centroids, clusters)
@@ -70,9 +76,11 @@ func main() {
 	log.Printf("done — index written to %s", *outPath)
 }
 
-// entry holds a single reference vector with its fraud label.
+// entry holds a single reference vector quantized to int8, plus its fraud label.
+// Using a fixed-size array avoids a heap allocation per vector and keeps the
+// cluster slices compact (~15 bytes/entry vs ~80 bytes with []float32).
 type entry struct {
-	vec   []float32
+	vec   [dims]int8
 	fraud bool
 }
 
@@ -96,11 +104,11 @@ func openGZ(path string) (*bufio.Reader, func(), error) {
 }
 
 func readSample(path string, rate float64, rng *rand.Rand) ([][]float32, error) {
-	r, close, err := openGZ(path)
+	r, closeFn, err := openGZ(path)
 	if err != nil {
 		return nil, err
 	}
-	defer close()
+	defer closeFn()
 
 	dec := json.NewDecoder(r)
 	var sample [][]float32
@@ -119,11 +127,11 @@ func readSample(path string, rate float64, rng *rand.Rand) ([][]float32, error) 
 }
 
 func assignAll(path string, centroids [][]float32, clusters [][]entry) (int, error) {
-	r, close, err := openGZ(path)
+	r, closeFn, err := openGZ(path)
 	if err != nil {
 		return 0, err
 	}
-	defer close()
+	defer closeFn()
 
 	dec := json.NewDecoder(r)
 	total := 0
@@ -133,9 +141,12 @@ func assignAll(path string, centroids [][]float32, clusters [][]entry) (int, err
 			break
 		}
 		ci := nearestCentroid(line.Vector, centroids)
-		vec := make([]float32, dims)
-		copy(vec, line.Vector)
-		clusters[ci] = append(clusters[ci], entry{vec, line.Label == "fraud"})
+
+		var e entry
+		q := ivf.QuantizeVec(line.Vector)
+		copy(e.vec[:], q)
+		e.fraud = line.Label == "fraud"
+		clusters[ci] = append(clusters[ci], e)
 		total++
 
 		if total%500_000 == 0 {
@@ -160,7 +171,6 @@ func nearestCentroid(vec []float32, centroids [][]float32) int {
 
 // kMeans runs Lloyd's algorithm on sample vectors.
 func kMeans(sample [][]float32, k, iters int, rng *rand.Rand) [][]float32 {
-	// Random initialisation (k-means||  would be better, but random is fine here).
 	perm := rng.Perm(len(sample))
 	centroids := make([][]float32, k)
 	for i := 0; i < k; i++ {
@@ -172,12 +182,10 @@ func kMeans(sample [][]float32, k, iters int, rng *rand.Rand) [][]float32 {
 	assignments := make([]int, len(sample))
 
 	for iter := 0; iter < iters; iter++ {
-		// Assign step.
 		for vi, v := range sample {
 			assignments[vi] = nearestCentroid(v, centroids)
 		}
 
-		// Update step.
 		newCents := make([][]float32, k)
 		counts := make([]int, k)
 		for i := range newCents {
@@ -229,7 +237,6 @@ func writeIndex(path string, centroids [][]float32, clusters [][]entry, numVecs 
 	}
 
 	// Cluster offsets: [numCents+1]uint64.
-	// offsets[i] is the first vector index of cluster i.
 	offsets := make([]uint64, int(numCents)+1)
 	var cur uint64
 	for i, cl := range clusters {
@@ -243,11 +250,10 @@ func writeIndex(path string, centroids [][]float32, clusters [][]entry, numVecs 
 		}
 	}
 
-	// Vector data: [numVecs * dims]int8 (quantized, sorted by cluster).
+	// Vector data: [numVecs * dims]int8 (already quantized at assignment time).
 	for _, cl := range clusters {
 		for _, e := range cl {
-			q := ivf.QuantizeVec(e.vec)
-			for _, b := range q {
+			for _, b := range e.vec {
 				if err := w.WriteByte(byte(b)); err != nil {
 					return err
 				}
@@ -284,8 +290,3 @@ func writeUint64(w *bufio.Writer, v uint64) error {
 	_, err := w.Write(buf[:])
 	return err
 }
-
-// sortClusters is unused but kept to document that cluster ordering doesn't
-// affect correctness — only the offsets array links centroid → vector range.
-var _ = sort.Slice
-var _ = fmt.Sprintf
