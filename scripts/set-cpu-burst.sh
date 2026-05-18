@@ -71,14 +71,26 @@ set_burst() {
 
   local old
   old=$(cat "$burst_file" 2>/dev/null || echo "?")
-  # Use 'sudo tee' so the write runs as root — a plain shell redirect runs as
-  # the calling user (deployer) which has no write access to the cgroup fs.
-  # The sudoers rule "deployer ALL=(ALL) NOPASSWD: /usr/bin/tee /sys/fs/cgroup/*"
-  # allows this without a password prompt.
-  if echo "$BURST_US" | sudo tee "$burst_file" >/dev/null 2>&1; then
-    echo "  ${name}: ${old} µs → ${BURST_US} µs   [${burst_file}]"
+
+  # The kernel enforces burst ≤ quota (EINVAL otherwise).
+  # Read cpu.max ("quota period") and cap BURST_US to the quota value.
+  local cpu_max_file="${burst_file%/cpu.max.burst}/cpu.max"
+  local cpu_max_file_v1="${burst_file%/cpu.cfs_burst_us}/cpu.cfs_quota_us"
+  local quota="$BURST_US"
+  if [[ -f "$cpu_max_file" ]]; then
+    local raw_quota
+    raw_quota=$(awk '{print $1}' "$cpu_max_file" 2>/dev/null || echo "max")
+    [[ "$raw_quota" =~ ^[0-9]+$ ]] && quota=$(( BURST_US < raw_quota ? BURST_US : raw_quota ))
+  elif [[ -f "$cpu_max_file_v1" ]]; then
+    local raw_quota
+    raw_quota=$(cat "$cpu_max_file_v1" 2>/dev/null || echo "0")
+    [[ "$raw_quota" =~ ^[0-9]+$ && "$raw_quota" -gt 0 ]] && quota=$(( BURST_US < raw_quota ? BURST_US : raw_quota ))
+  fi
+
+  if echo "$quota" | sudo tee "$burst_file" >/dev/null 2>&1; then
+    echo "  ${name}: ${old} µs → ${quota} µs  (quota-capped from ${BURST_US})   [${burst_file}]"
   else
-    echo "  [fail] ${name} — could not write ${burst_file} (try: sudo ./scripts/set-cpu-burst.sh)"
+    echo "  [fail] ${name} — could not write ${burst_file}"
   fi
 }
 
