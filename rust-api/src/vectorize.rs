@@ -91,7 +91,11 @@ pub fn vectorize(req: &Request, norm: &Normalization, mcc_risk: &MccRisk) -> [f3
     v[3] = naive.hour() as f32 / 23.0;
     v[4] = {
         use chrono::Datelike;
-        naive.weekday().num_days_from_sunday() as f32 / 6.0
+        // Spec: day_of_week / 6, where mon=0 … sun=6 (ISO Monday-origin).
+        // num_days_from_monday() gives Monday=0 … Sunday=6, matching the spec.
+        // The previous num_days_from_sunday() yielded Sunday=0 … Saturday=6,
+        // shifting every day by 1 and mapping Sunday to 0.0 instead of 1.0.
+        naive.weekday().num_days_from_monday() as f32 / 6.0
     };
 
     // dim 5, 6 — recency / velocity (sentinel -1.0 when no prior transaction)
@@ -149,4 +153,153 @@ fn clamp(v: f32) -> f32 {
 #[inline(always)]
 fn bool_f(b: bool) -> f32 {
     if b { 1.0 } else { 0.0 }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Minimal normalization and MCC risk fixtures matching the contest's
+    // normalization.json defaults (values are irrelevant for dim4 tests but
+    // must be non-zero to avoid division-by-zero in other dims).
+    fn norm() -> Normalization {
+        Normalization {
+            max_amount: 10_000.0,
+            max_installments: 12.0,
+            amount_vs_avg_ratio: 10.0,
+            max_minutes: 1440.0,
+            max_km: 1000.0,
+            max_tx_count_24h: 20.0,
+            max_merchant_avg_amount: 10_000.0,
+        }
+    }
+
+    fn mcc_risk() -> MccRisk {
+        HashMap::new() // all lookups fall through to DEFAULT_MCC_RISK = 0.5
+    }
+
+    /// Build a minimal Request with only requested_at varying; all other fields
+    /// are neutral (zero amounts, empty merchants list, no last_transaction).
+    fn request_at(requested_at: &str) -> Request {
+        Request {
+            transaction: Transaction {
+                amount: 0.0,
+                installments: 0,
+                requested_at: requested_at.to_string(),
+            },
+            customer: Customer {
+                avg_amount: 1.0, // non-zero to avoid zero-division in dim2
+                tx_count_24h: 0,
+                known_merchants: vec![],
+            },
+            merchant: Merchant {
+                id: "m1".to_string(),
+                mcc: "0000".to_string(),
+                avg_amount: 0.0,
+            },
+            terminal: Terminal {
+                is_online: false,
+                card_present: false,
+                km_from_home: 0.0,
+            },
+            last_tx: None,
+        }
+    }
+
+    // ── Spec: day_of_week formula is `day_of_week(requested_at) / 6`
+    //         where mon=0, sun=6.
+    //
+    // Our current implementation calls `num_days_from_sunday()` which yields
+    // sun=0, mon=1, ..., sat=6 — off by one for every day, and a full swing
+    // (0.0 vs 1.0) for Sunday specifically.
+    //
+    // These tests assert the CORRECT spec-compliant values and therefore FAIL
+    // on the current code.  After the fix they must all pass.
+
+    #[test]
+    fn dim4_monday_is_zero() {
+        // 2026-03-23 is a Monday.
+        let v = vectorize(&request_at("2026-03-23T12:00:00Z"), &norm(), &mcc_risk());
+        assert_eq!(v[4], 0.0 / 6.0, "Monday must map to dim4=0.0 (spec: mon=0)");
+    }
+
+    #[test]
+    fn dim4_tuesday_is_one_sixth() {
+        // 2026-03-24 is a Tuesday.
+        let v = vectorize(&request_at("2026-03-24T12:00:00Z"), &norm(), &mcc_risk());
+        let expected = 1.0_f32 / 6.0;
+        assert!(
+            (v[4] - expected).abs() < 1e-6,
+            "Tuesday must map to dim4≈{expected:.6} (spec: tue=1), got {}",
+            v[4]
+        );
+    }
+
+    #[test]
+    fn dim4_wednesday_is_two_sixths() {
+        // 2026-03-25 is a Wednesday.
+        let v = vectorize(&request_at("2026-03-25T12:00:00Z"), &norm(), &mcc_risk());
+        let expected = 2.0_f32 / 6.0;
+        assert!(
+            (v[4] - expected).abs() < 1e-6,
+            "Wednesday must map to dim4≈{expected:.6} (spec: wed=2), got {}",
+            v[4]
+        );
+    }
+
+    #[test]
+    fn dim4_thursday_is_three_sixths() {
+        // 2026-03-26 is a Thursday.
+        let v = vectorize(&request_at("2026-03-26T12:00:00Z"), &norm(), &mcc_risk());
+        let expected = 3.0_f32 / 6.0;
+        assert!(
+            (v[4] - expected).abs() < 1e-6,
+            "Thursday must map to dim4≈{expected:.6} (spec: thu=3), got {}",
+            v[4]
+        );
+    }
+
+    #[test]
+    fn dim4_friday_is_four_sixths() {
+        // 2026-03-27 is a Friday.
+        let v = vectorize(&request_at("2026-03-27T12:00:00Z"), &norm(), &mcc_risk());
+        let expected = 4.0_f32 / 6.0;
+        assert!(
+            (v[4] - expected).abs() < 1e-6,
+            "Friday must map to dim4≈{expected:.6} (spec: fri=4), got {}",
+            v[4]
+        );
+    }
+
+    #[test]
+    fn dim4_saturday_is_five_sixths() {
+        // 2026-03-28 is a Saturday.
+        let v = vectorize(&request_at("2026-03-28T12:00:00Z"), &norm(), &mcc_risk());
+        let expected = 5.0_f32 / 6.0;
+        assert!(
+            (v[4] - expected).abs() < 1e-6,
+            "Saturday must map to dim4≈{expected:.6} (spec: sat=5), got {}",
+            v[4]
+        );
+    }
+
+    #[test]
+    fn dim4_sunday_is_one() {
+        // 2026-03-15 is a Sunday.
+        // With num_days_from_sunday() the current code returns 0.0 — a full 1.0
+        // swing from the correct value of 1.0.  This is the worst-case mismatch.
+        let v = vectorize(&request_at("2026-03-15T12:00:00Z"), &norm(), &mcc_risk());
+        assert_eq!(v[4], 6.0 / 6.0, "Sunday must map to dim4=1.0 (spec: sun=6), got {}", v[4]);
+    }
+
+    // Regression: other dims must be unaffected by the day_of_week fix.
+
+    #[test]
+    fn dim3_hour_of_day_unaffected() {
+        // Midnight → 0/23 = 0.0; 23:00 → 23/23 = 1.0
+        let v_midnight = vectorize(&request_at("2026-03-23T00:00:00Z"), &norm(), &mcc_risk());
+        let v_evening = vectorize(&request_at("2026-03-23T23:00:00Z"), &norm(), &mcc_risk());
+        assert_eq!(v_midnight[3], 0.0, "midnight must give dim3=0.0");
+        assert!((v_evening[3] - 1.0).abs() < 1e-6, "23:00 must give dim3=1.0");
+    }
 }
