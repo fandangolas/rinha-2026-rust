@@ -1,14 +1,18 @@
 name: rinha-2026-rust
 
-# CPU budget: 1.50 cores total (contest limit).
+# CPU budget: 1.00 cores total (contest limit per docs/en/ARCHITECTURE.md).
 # HAProxy is a pure proxy — ~0.9% actual CPU at 900 RPS via UDS.
-# Give the APIs the rest: 72.5% each → max CFS stall = 550µs (vs 1ms default).
+# Give the APIs the rest: 47.5% each → max CFS stall = 2.1ms.
+#
+# Docker enforces cpu_quota ≥ 1000µs (1ms), so for 47.5% the minimum
+# valid period is 4000µs (quota = 1900µs). Period=2000 with quota=950
+# is rejected with "CPU cfs quota can not be less than 1ms".
 #
 #   haproxy: cpu_period=20000µs  cpu_quota=1000µs  →  5.0% = 0.050 CPU
-#   api1:    cpu_period= 2000µs  cpu_quota=1450µs  → 72.5% = 0.725 CPU
-#   api2:    cpu_period= 2000µs  cpu_quota=1450µs  → 72.5% = 0.725 CPU
+#   api1:    cpu_period= 4000µs  cpu_quota=1900µs  → 47.5% = 0.475 CPU
+#   api2:    cpu_period= 4000µs  cpu_quota=1900µs  → 47.5% = 0.475 CPU
 #   ──────────────────────────────────────────────────────────────────
-#   total:   0.050 + 0.725 + 0.725 = 1.500 CPU ✓
+#   total:   0.050 + 0.475 + 0.475 = 1.000 CPU ✓
 #
 # HAProxy ↔ API: Unix Domain Sockets over shared 'sockets' volume.
 # No TCP ports exposed by the API containers.
@@ -48,8 +52,8 @@ services:
       timeout: 2s
       retries: 12
       start_period: 15s
-    cpu_period: 2000
-    cpu_quota: 1450
+    cpu_period: 4000
+    cpu_quota: 1900
     deploy:
       resources:
         limits:
@@ -70,8 +74,8 @@ services:
       timeout: 2s
       retries: 12
       start_period: 15s
-    cpu_period: 2000
-    cpu_quota: 1450
+    cpu_period: 4000
+    cpu_quota: 1900
     deploy:
       resources:
         limits:
