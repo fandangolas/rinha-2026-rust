@@ -20,7 +20,7 @@ services:
       - backend
 
   api1:
-    image: fandangolas/rinha-2026-api-rust:latest
+    image: nsilveira/rinha-2026-api-rust:latest
     environment:
       IVF_PROBES: "${IVF_PROBES:-3}"
       TOKIO_WORKER_THREADS: "${TOKIO_WORKER_THREADS:-1}"
@@ -35,7 +35,7 @@ services:
 
   # Direct-access port on api1 so we can bypass HAProxy and measure raw API latency.
   api1-direct:
-    image: fandangolas/rinha-2026-api-rust:latest
+    image: nsilveira/rinha-2026-api-rust:latest
     environment:
       IVF_PROBES: "${IVF_PROBES:-3}"
       TOKIO_WORKER_THREADS: "${TOKIO_WORKER_THREADS:-1}"
@@ -51,7 +51,7 @@ services:
       - backend
 
   api2:
-    image: fandangolas/rinha-2026-api-rust:latest
+    image: nsilveira/rinha-2026-api-rust:latest
     environment:
       IVF_PROBES: "${IVF_PROBES:-3}"
       TOKIO_WORKER_THREADS: "${TOKIO_WORKER_THREADS:-1}"
