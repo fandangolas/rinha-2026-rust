@@ -1,10 +1,5 @@
 name: rinha-2026-rust
 
-# Total: 0.05 + 0.475 + 0.475 = 1.00 CPU  |  25 + 160 + 160 = 345 MB
-# CFS period=2ms minimises throttle stall to at most 1ms per window.
-# Optimal IVF config baked into image: 1k centroids, probes=3
-#   → p99 < 1ms at c=1, 100% decision accuracy, det_score=3000.
-
 services:
   haproxy:
     image: haproxy:3.0-alpine
@@ -17,11 +12,10 @@ services:
         condition: service_healthy
       api2:
         condition: service_healthy
-    cpu_period: 2000
-    cpu_quota: 100
     deploy:
       resources:
         limits:
+          cpus: "0.05"
           memory: "25MB"
     networks:
       - backend
@@ -34,11 +28,10 @@ services:
       timeout: 2s
       retries: 10
       start_period: 30s
-    cpu_period: 2000
-    cpu_quota: 950
     deploy:
       resources:
         limits:
+          cpus: "0.475"
           memory: "160MB"
     networks:
       - backend
@@ -51,11 +44,10 @@ services:
       timeout: 2s
       retries: 10
       start_period: 30s
-    cpu_period: 2000
-    cpu_quota: 950
     deploy:
       resources:
         limits:
+          cpus: "0.475"
           memory: "160MB"
     networks:
       - backend
