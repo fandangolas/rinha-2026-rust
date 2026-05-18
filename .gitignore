@@ -1,11 +1,9 @@
 # compiled binaries (root-level; not the api/ source directory)
-/bench
 /buildindex
 !/api/
 
-# local index files (large, built inside Docker)
+# local index file (large, built inside Docker)
 *.ivf.bin
-*.hnsw.bin
 
 # local dataset copy used for Docker builds (44MB index + json fixtures)
 /data/
@@ -17,3 +15,4 @@ rinha-api-bin
 # k6 local test artifacts (large files, not committed)
 test/test-data.json
 test/results.json
+test/results-direct.json

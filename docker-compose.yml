@@ -1,23 +1,37 @@
-name: rinha-2026
+name: rinha-2026-rust
 
-# Short CFS period eliminates the throttle-stall cliff.
-# Linux minimum cpu_quota = 1ms, so period = 1ms / fraction.
-# At 50% each component gets 1ms per 2ms window → max stall = 1ms.
-# Total: 0.50 + 0.50 + 0.50 = 1.50 CPU (challenge limit).
+# Mirror of the submission branch — pulls the published image from Docker
+# Hub. Use `docker-compose.local-k6.yml` when iterating on source code
+# (that variant builds the image from the local Dockerfile).
+#
+# CPU budget: 1.00 cores total (contest limit per docs/en/ARCHITECTURE.md).
+# Docker enforces cpu_quota ≥ 1000µs (1ms), so 47.5% per API needs
+# period ≥ 4000µs (quota = 1900µs).
+#
+#   haproxy: cpu_period=20000µs  cpu_quota=1000µs  →  5.0% = 0.050 CPU
+#   api1:    cpu_period= 4000µs  cpu_quota=1900µs  → 47.5% = 0.475 CPU
+#   api2:    cpu_period= 4000µs  cpu_quota=1900µs  → 47.5% = 0.475 CPU
+#   ──────────────────────────────────────────────────────────────────
+#   total:   0.050 + 0.475 + 0.475 = 1.000 CPU ✓
+#   memory:  25  +  160  +  160    = 345 MB ≤ 350 MB ✓
+#
+# HAProxy ↔ API: Unix Domain Sockets over shared 'sockets' volume.
+# HAProxy's internal UDS backend check (option httpchk GET /ready,
+# rise 1, inter 2s) is the only readiness gate — no docker healthcheck
+# on the APIs, no `condition: service_healthy` on haproxy.
 
 services:
   haproxy:
     image: haproxy:3.0-alpine
     volumes:
       - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - sockets:/sockets
     ports:
       - "9999:9999"
     depends_on:
-      api1:
-        condition: service_healthy
-      api2:
-        condition: service_healthy
-    cpu_period: 2000
+      - api1
+      - api2
+    cpu_period: 20000
     cpu_quota: 1000
     deploy:
       resources:
@@ -27,21 +41,14 @@ services:
       - backend
 
   api1:
-    image: fandangolas/rinha-2026-api:latest
+    image: nsilveira/rinha-2026-api-rust:latest
     environment:
-      SEARCHER: ivf
-      IVF_PROBES: "5"
-      GOGC: "off"
-      GOMEMLIMIT: "120MiB"
-      GOMAXPROCS: "1"
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:9999/ready"]
-      interval: 5s
-      timeout: 2s
-      retries: 10
-      start_period: 10s
-    cpu_period: 2000
-    cpu_quota: 1000
+      SOCKET_PATH: /sockets/api1.sock
+      TOKIO_WORKER_THREADS: "2"
+    volumes:
+      - sockets:/sockets
+    cpu_period: 4000
+    cpu_quota: 1900
     deploy:
       resources:
         limits:
@@ -50,27 +57,24 @@ services:
       - backend
 
   api2:
-    image: fandangolas/rinha-2026-api:latest
+    image: nsilveira/rinha-2026-api-rust:latest
     environment:
-      SEARCHER: ivf
-      IVF_PROBES: "5"
-      GOGC: "off"
-      GOMEMLIMIT: "120MiB"
-      GOMAXPROCS: "1"
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:9999/ready"]
-      interval: 5s
-      timeout: 2s
-      retries: 10
-      start_period: 10s
-    cpu_period: 2000
-    cpu_quota: 1000
+      SOCKET_PATH: /sockets/api2.sock
+      TOKIO_WORKER_THREADS: "2"
+    volumes:
+      - sockets:/sockets
+    cpu_period: 4000
+    cpu_quota: 1900
     deploy:
       resources:
         limits:
           memory: "160MB"
     networks:
       - backend
+
+volumes:
+  sockets:
+    driver: local
 
 networks:
   backend:

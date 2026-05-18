@@ -1,23 +1,29 @@
 name: rinha-2026-local-k6
 
-# Local k6 test harness — mirrors contest resource limits exactly.
-# Uses the pre-built image (data baked in); no host volume mounts.
-# haproxy: period=20000µs quota=1000µs →  5% CPU  (Tw=0ms; ~0.9% actual use)
-# api1/2:  period=2000µs  quota=1450µs → 72.5% CPU each
-# Total: 0.05 + 0.725 + 0.725 = 1.50 CPU  (challenge limit).
+# Local k6 test harness — same topology and resource limits as the
+# submission compose, but builds the image from the local Dockerfile
+# so iteration on source code doesn't require pushing to Docker Hub.
+#
+# Knobs (override via env or .env file):
+#   IVF_PROBES            — search probes per query (default 3)
+#   TOKIO_WORKER_THREADS  — tokio runtime threads (default 2)
+#   METRICS               — true|false; gates per-phase histograms
+#                           and /metrics endpoint (default false)
+#
+# CPU + memory limits match the submission compose exactly (1.00 CPU /
+# 345 MB total), so a local k6 run is representative of the judge.
 
 services:
   haproxy:
     image: haproxy:3.0-alpine
     volumes:
       - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - sockets:/sockets
     ports:
       - "9999:9999"
     depends_on:
-      api1:
-        condition: service_healthy
-      api2:
-        condition: service_healthy
+      - api1
+      - api2
     cpu_period: 20000
     cpu_quota: 1000
     deploy:
@@ -30,20 +36,17 @@ services:
   api1:
     build:
       context: .
-      dockerfile: Dockerfile.rust
+      dockerfile: Dockerfile
     image: nsilveira/rinha-2026-api-rust:latest
     environment:
+      SOCKET_PATH: /sockets/api1.sock
       IVF_PROBES: "${IVF_PROBES:-3}"
-      TOKIO_WORKER_THREADS: "${TOKIO_WORKER_THREADS:-1}"
+      TOKIO_WORKER_THREADS: "${TOKIO_WORKER_THREADS:-2}"
       METRICS: "${METRICS:-false}"
-    healthcheck:
-      test: ["CMD", "/bin/bash", "-c", "exec 3<>/dev/tcp/localhost/9999 && printf 'GET /ready HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200"]
-      interval: 5s
-      timeout: 2s
-      retries: 12
-      start_period: 15s
-    cpu_period: 2000
-    cpu_quota: 1450
+    volumes:
+      - sockets:/sockets
+    cpu_period: 4000
+    cpu_quota: 1900
     deploy:
       resources:
         limits:
@@ -54,26 +57,27 @@ services:
   api2:
     build:
       context: .
-      dockerfile: Dockerfile.rust
+      dockerfile: Dockerfile
     image: nsilveira/rinha-2026-api-rust:latest
     environment:
+      SOCKET_PATH: /sockets/api2.sock
       IVF_PROBES: "${IVF_PROBES:-3}"
-      TOKIO_WORKER_THREADS: "${TOKIO_WORKER_THREADS:-1}"
+      TOKIO_WORKER_THREADS: "${TOKIO_WORKER_THREADS:-2}"
       METRICS: "${METRICS:-false}"
-    healthcheck:
-      test: ["CMD", "/bin/bash", "-c", "exec 3<>/dev/tcp/localhost/9999 && printf 'GET /ready HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200"]
-      interval: 5s
-      timeout: 2s
-      retries: 12
-      start_period: 15s
-    cpu_period: 2000
-    cpu_quota: 1450
+    volumes:
+      - sockets:/sockets
+    cpu_period: 4000
+    cpu_quota: 1900
     deploy:
       resources:
         limits:
           memory: "160MB"
     networks:
       - backend
+
+volumes:
+  sockets:
+    driver: local
 
 networks:
   backend:

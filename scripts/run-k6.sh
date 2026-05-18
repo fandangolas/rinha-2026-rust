@@ -19,14 +19,15 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_DIR="${REPO_ROOT}/test"
-COMPOSE_FILE="${REPO_ROOT}/docker-compose.rust.yml"
+COMPOSE_FILE="${REPO_ROOT}/docker-compose.yml"
 TEST_DATA_URL="https://raw.githubusercontent.com/zanfranceschi/rinha-de-backend-2026/main/test/test-data.json"
 BUILD=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --build)  BUILD=1; shift ;;
-    --tcp)    COMPOSE_FILE="${REPO_ROOT}/docker-compose.local-k6.yml"; shift ;;
+    # Build the image locally from source. Switches to the local-k6 compose
+    # which has `build:` directives; otherwise we pull from Docker Hub.
+    --build)  BUILD=1; COMPOSE_FILE="${REPO_ROOT}/docker-compose.local-k6.yml"; shift ;;
     *) echo "unknown argument: $1" >&2; exit 1 ;;
   esac
 done

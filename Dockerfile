@@ -1,74 +1,49 @@
-# syntax=docker/dockerfile:1
-
-# ---- Stage 1: build the index builder tool --------------------------------
-FROM golang:1.23-alpine AS builder-tool
-
+# Stage 1: build the IVF index builder from Go source
+FROM golang:1.23-alpine AS go-builder
 WORKDIR /src
 COPY go.mod go.sum ./
+COPY vendor/ ./vendor/
 COPY api/ ./api/
+RUN go build -mod=vendor -o /buildindex ./api/cmd/buildindex
 
-WORKDIR /src/api/cmd/buildindex
-RUN go build -o /buildindex .
-
-# ---- Stage 2: build the IVF index from reference data --------------------
+# Stage 2: download reference data and build IVF index
+# 1k centroids → 56KB centroid table (fits L2 cache), probes=3 → 100% recall
 FROM alpine:3.20 AS indexer
-
-# Install curl to download reference data files.
 RUN apk add --no-cache curl
-
-COPY --from=builder-tool /buildindex /buildindex
-
+COPY --from=go-builder /buildindex /buildindex
 RUN mkdir -p /data && \
     curl -fsSL "https://raw.githubusercontent.com/zanfranceschi/rinha-de-backend-2026/main/resources/references.json.gz" \
          -o /data/references.json.gz && \
     curl -fsSL "https://raw.githubusercontent.com/zanfranceschi/rinha-de-backend-2026/main/resources/mcc_risk.json" \
          -o /data/mcc_risk.json && \
     curl -fsSL "https://raw.githubusercontent.com/zanfranceschi/rinha-de-backend-2026/main/resources/normalization.json" \
-         -o /data/normalization.json
+         -o /data/normalization.json && \
+    /buildindex \
+      -in  /data/references.json.gz \
+      -out /data/index.ivf.bin \
+      -centroids 1000 \
+      -sample    0.1 \
+      -iters     20 \
+      -probes    3
 
-# Build the IVF index.
-# 5000 centroids → ~600 vectors/cluster → scanning probes=10 clusters covers
-# ~6000 vectors per query, giving good recall at low latency.
-# -probes sets the default baked into the index header; override at runtime via IVF_PROBES.
-RUN /buildindex \
-      -in   /data/references.json.gz \
-      -out  /data/index.ivf.bin      \
-      -centroids 5000                \
-      -sample    0.1                 \
-      -iters     20                  \
-      -probes    5
+# Stage 3: compile Rust API (fully offline via vendored deps)
+FROM rust:slim AS rust-builder
+WORKDIR /app
+COPY rust-api/ .
+RUN cargo build --release --locked --offline
 
-# ---- Stage 3: build the API binary ----------------------------------------
-FROM golang:1.23-alpine AS api-builder
-
-WORKDIR /src
-COPY go.mod go.sum ./
-RUN go mod download
-
-COPY api/ ./api/
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /api ./api/cmd/server
-
-# ---- Stage 4: minimal runtime image --------------------------------------
-FROM alpine:3.20
-
-COPY --from=api-builder /api          /api
-COPY --from=indexer     /data/index.ivf.bin    /data/index.ivf.bin
-COPY --from=indexer     /data/mcc_risk.json    /data/mcc_risk.json
-COPY --from=indexer     /data/normalization.json /data/normalization.json
-
-ENV PORT=9999
+# Stage 4: minimal runtime image
+FROM debian:bookworm-slim
+# wget is used by the Docker healthcheck (GET /ready).
+# debian:bookworm-slim has no bash or curl, so wget is the smallest option.
+RUN apt-get update && apt-get install -y --no-install-recommends wget \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=rust-builder /app/target/release/rinha-api /usr/local/bin/rinha-api
+COPY --from=indexer /data/index.ivf.bin      /data/index.ivf.bin
+COPY --from=indexer /data/mcc_risk.json      /data/mcc_risk.json
+COPY --from=indexer /data/normalization.json /data/normalization.json
 ENV INDEX_PATH=/data/index.ivf.bin
-ENV MCC_RISK_PATH=/data/mcc_risk.json
-ENV NORM_PATH=/data/normalization.json
-# Switch to "hnsw" once the HNSW implementation is ready.
-ENV SEARCHER=ivf
-# Number of clusters to probe per query. Higher = better recall, more latency.
-ENV IVF_PROBES=20
-
-# Tune GC: rely entirely on GOMEMLIMIT rather than GOGC heap-doubling heuristic.
-# Set GOMEMLIMIT to ~80% of the container's memory budget.
-ENV GOGC=off
-ENV GOMEMLIMIT=120MiB
-
+ENV IVF_PROBES=3
+ENV TOKIO_WORKER_THREADS=1
 EXPOSE 9999
-ENTRYPOINT ["/api"]
+CMD ["rinha-api"]

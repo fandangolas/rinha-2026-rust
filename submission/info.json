@@ -1,7 +1,0 @@
-{
-    "participants": ["fandangolas"],
-    "social": ["https://github.com/fandangolas"],
-    "source-code-repo": "https://github.com/fandangolas/rinha-de-backend-2026",
-    "stack": ["rust", "tokio", "axum", "haproxy"],
-    "open_to_work": false
-}
