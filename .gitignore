@@ -1,7 +1,3 @@
-# compiled binaries (root-level; not the api/ source directory)
-/buildindex
-!/api/
-
 # local index file (large, built inside Docker)
 *.ivf.bin
 

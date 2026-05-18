@@ -1,47 +1,36 @@
-# Stage 1: build the IVF index builder from Go source
-FROM golang:1.23-alpine AS go-builder
-WORKDIR /src
-COPY go.mod go.sum ./
-COPY vendor/ ./vendor/
-COPY api/ ./api/
-RUN go build -mod=vendor -o /buildindex ./api/cmd/buildindex
-
-# Stage 2: download reference data and build IVF index
-# 1k centroids → 56KB centroid table (fits L2 cache), probes=3 → 100% recall
-FROM alpine:3.20 AS indexer
-RUN apk add --no-cache curl
-COPY --from=go-builder /buildindex /buildindex
-RUN mkdir -p /data && \
+# Stage 1: compile Rust API + buildindex binary (fully offline via vendored deps),
+# then download reference data and build the IVF binary index.
+FROM rust:slim AS builder
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY rust-api/ .
+RUN cargo build --release --locked --offline --bins && \
+    mkdir -p /data && \
     curl -fsSL "https://raw.githubusercontent.com/zanfranceschi/rinha-de-backend-2026/main/resources/references.json.gz" \
          -o /data/references.json.gz && \
     curl -fsSL "https://raw.githubusercontent.com/zanfranceschi/rinha-de-backend-2026/main/resources/mcc_risk.json" \
          -o /data/mcc_risk.json && \
     curl -fsSL "https://raw.githubusercontent.com/zanfranceschi/rinha-de-backend-2026/main/resources/normalization.json" \
          -o /data/normalization.json && \
-    /buildindex \
-      -in  /data/references.json.gz \
-      -out /data/index.ivf.bin \
-      -centroids 1000 \
-      -sample    0.1 \
-      -iters     20 \
-      -probes    3
+    ./target/release/buildindex \
+        -in  /data/references.json.gz \
+        -out /data/index.ivf.bin \
+        -centroids 1000 \
+        -sample    0.1 \
+        -iters     20 \
+        -probes    3
 
-# Stage 3: compile Rust API (fully offline via vendored deps)
-FROM rust:slim AS rust-builder
-WORKDIR /app
-COPY rust-api/ .
-RUN cargo build --release --locked --offline
-
-# Stage 4: minimal runtime image
+# Stage 2: minimal runtime image
 FROM debian:bookworm-slim
 # wget is used by the Docker healthcheck (GET /ready).
 # debian:bookworm-slim has no bash or curl, so wget is the smallest option.
 RUN apt-get update && apt-get install -y --no-install-recommends wget \
     && rm -rf /var/lib/apt/lists/*
-COPY --from=rust-builder /app/target/release/rinha-api /usr/local/bin/rinha-api
-COPY --from=indexer /data/index.ivf.bin      /data/index.ivf.bin
-COPY --from=indexer /data/mcc_risk.json      /data/mcc_risk.json
-COPY --from=indexer /data/normalization.json /data/normalization.json
+COPY --from=builder /app/target/release/rinha-api /usr/local/bin/rinha-api
+COPY --from=builder /data/index.ivf.bin            /data/index.ivf.bin
+COPY --from=builder /data/mcc_risk.json            /data/mcc_risk.json
+COPY --from=builder /data/normalization.json       /data/normalization.json
 ENV INDEX_PATH=/data/index.ivf.bin
 ENV IVF_PROBES=3
 ENV TOKIO_WORKER_THREADS=1
