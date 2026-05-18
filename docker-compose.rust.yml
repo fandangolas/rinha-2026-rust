@@ -5,11 +5,11 @@ name: rinha-2026-rust
 # We give the APIs the lion's share so they can handle load spikes
 # without hitting the CFS throttle as often.
 #
-#   haproxy: period=5000µs  quota=1000µs → 20% CPU  (max stall 4ms, but Tw=0ms in practice)
-#   api1:    period=2000µs  quota=1300µs → 65% CPU  (max stall 700µs, down from 1ms)
-#   api2:    period=2000µs  quota=1300µs → 65% CPU
+#   haproxy: period=10000µs quota=1000µs → 10% CPU  (Tw=0ms in all tests; ~0.9% actual use)
+#   api1:    period=2000µs  quota=1400µs → 70% CPU  (max stall 600µs, down from 1ms)
+#   api2:    period=2000µs  quota=1400µs → 70% CPU
 #   ─────────────────────────────────────────────────
-#   total:   0.20 + 0.65 + 0.65 = 1.50 CPU ✓
+#   total:   0.10 + 0.70 + 0.70 = 1.50 CPU ✓
 #
 # HAProxy ↔ API communication uses Unix Domain Sockets (UDS) over the
 # shared 'sockets' volume.  No TCP ports are exposed by the API containers.
@@ -27,7 +27,7 @@ services:
         condition: service_healthy
       api2:
         condition: service_healthy
-    cpu_period: 5000
+    cpu_period: 10000
     cpu_quota: 1000
     deploy:
       resources:
@@ -55,7 +55,7 @@ services:
       retries: 12
       start_period: 15s
     cpu_period: 2000
-    cpu_quota: 1300
+    cpu_quota: 1400
     deploy:
       resources:
         limits:
@@ -79,7 +79,7 @@ services:
       retries: 12
       start_period: 15s
     cpu_period: 2000
-    cpu_quota: 1300
+    cpu_quota: 1400
     deploy:
       resources:
         limits:
