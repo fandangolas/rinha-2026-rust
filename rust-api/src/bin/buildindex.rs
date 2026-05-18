@@ -19,7 +19,7 @@
 ///   labels:         [num_vecs]              u8   (0=legit, 1=fraud)
 use std::{
     fs::File,
-    io::{BufRead, BufReader, BufWriter, Write},
+    io::{BufWriter, Read, Write},
     time::Instant,
 };
 
@@ -176,50 +176,138 @@ struct RefLine {
 }
 
 // ---------------------------------------------------------------------------
+// JSON array streaming
+//
+// references.json.gz contains a single compact JSON array:
+//   [{"vector":[...],"label":"legit"},{"vector":[...],"label":"fraud"},...]
+//
+// `JsonArrayUnwrapper` is a `Read` adapter that strips the outer `[` / `]`
+// and replaces top-level commas (i.e. commas between array elements, not
+// commas inside objects/arrays) with spaces, so that `serde_json`'s
+// `StreamDeserializer` (which skips only whitespace) can process the
+// elements as a sequence of top-level values.
+// ---------------------------------------------------------------------------
+
+struct JsonArrayUnwrapper<R: Read> {
+    inner: R,
+    /// Have we consumed the opening `[`?
+    started: bool,
+    /// Nesting depth of `{` / `[` encountered so far. Top-level commas
+    /// (depth == 0) are the array-element separators to replace with spaces.
+    depth: i32,
+    /// True once we have returned EOF.
+    done: bool,
+}
+
+impl<R: Read> JsonArrayUnwrapper<R> {
+    fn new(inner: R) -> Self {
+        Self {
+            inner,
+            started: false,
+            depth: 0,
+            done: false,
+        }
+    }
+}
+
+impl<R: Read> Read for JsonArrayUnwrapper<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.done || buf.is_empty() {
+            return Ok(0);
+        }
+
+        // Loop until we've produced at least one output byte (or reached true
+        // EOF / end of array). Without this loop, returning 0 when we skipped
+        // bytes (e.g. the opening `[`) would be misinterpreted as EOF by
+        // callers that use the `Bytes` iterator (serde_json's IoRead).
+        loop {
+            let n = self.inner.read(buf)?;
+            if n == 0 {
+                self.done = true;
+                return Ok(0);
+            }
+
+            let mut out_pos = 0usize;
+
+            for i in 0..n {
+                let b = buf[i];
+
+                if !self.started {
+                    // Skip bytes until we see the opening `[`.
+                    if b == b'[' {
+                        self.started = true;
+                    }
+                    continue;
+                }
+
+                // Once we've seen the opening `[`, track depth and rewrite
+                // top-level commas → spaces and eat the closing `]`.
+                match b {
+                    b'{' | b'[' => {
+                        self.depth += 1;
+                        buf[out_pos] = b;
+                        out_pos += 1;
+                    }
+                    b'}' | b']' if self.depth > 0 => {
+                        self.depth -= 1;
+                        buf[out_pos] = b;
+                        out_pos += 1;
+                    }
+                    b']' => {
+                        // depth == 0: closing bracket of the outer array.
+                        self.done = true;
+                        break;
+                    }
+                    b',' if self.depth == 0 => {
+                        // Top-level comma: element separator → space.
+                        buf[out_pos] = b' ';
+                        out_pos += 1;
+                    }
+                    _ => {
+                        buf[out_pos] = b;
+                        out_pos += 1;
+                    }
+                }
+            }
+
+            if out_pos > 0 || self.done {
+                return Ok(out_pos);
+            }
+            // out_pos == 0 and not done: all bytes in this chunk were skipped
+            // (e.g. we just consumed the `[`). Read another chunk.
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // I/O helpers
 // ---------------------------------------------------------------------------
 
-fn open_gz(path: &str) -> Result<impl BufRead, Box<dyn std::error::Error>> {
+fn open_gz_array(path: &str) -> Result<JsonArrayUnwrapper<GzDecoder<File>>, std::io::Error> {
     let file = File::open(path)?;
     let gz = GzDecoder::new(file);
-    Ok(BufReader::with_capacity(1 << 20, gz))
+    Ok(JsonArrayUnwrapper::new(gz))
 }
 
 // ---------------------------------------------------------------------------
 // Pass 1: sample
 // ---------------------------------------------------------------------------
 
-/// Reads a random `rate` fraction of float32 vectors from the gzipped JSON
-/// array. The file is a single JSON array — we stream it line-by-line after
-/// the opening '[', relying on the fact that the serializer emits one object
-/// per line.
 fn read_sample(
     path: &str,
     rate: f64,
     rng: &mut ChaCha8Rng,
 ) -> Result<Vec<[f32; DIMS]>, Box<dyn std::error::Error>> {
-    let reader = open_gz(path)?;
+    let reader = open_gz_array(path)?;
     let mut sample = Vec::new();
 
-    for line in reader.lines() {
-        let line = line?;
-        let line = line.trim();
-        // Skip the array delimiters and empty lines.
-        if line == "[" || line == "]" || line.is_empty() {
-            continue;
-        }
-        // Strip a trailing comma if present (last element has none).
-        let line = line.strip_suffix(',').unwrap_or(line);
-        if line.is_empty() {
-            continue;
-        }
-
-        if rng.random::<f64>() >= rate {
-            continue;
-        }
-
-        let rec: RefLine = serde_json::from_str(line)?;
+    let stream = serde_json::Deserializer::from_reader(reader).into_iter::<RefLine>();
+    for result in stream {
+        let rec = result?;
         if rec.vector.len() < DIMS {
+            continue;
+        }
+        if rng.random::<f64>() >= rate {
             continue;
         }
         let mut v = [0f32; DIMS];
@@ -260,6 +348,7 @@ fn kmeans(
         }
 
         // Recompute centroids as the mean of their assigned vectors.
+        // Use f64 accumulators to avoid precision loss over many additions.
         let mut sums = vec![[0f64; DIMS]; k];
         let mut counts = vec![0usize; k];
         for (vi, v) in sample.iter().enumerate() {
@@ -276,8 +365,8 @@ fn kmeans(
                     centroids[ci][j] = (sums[ci][j] / n) as f32;
                 }
             }
-            // If a centroid has no assignments, leave it in place (rare edge case
-            // at low sample rates; matches Go's behaviour of keeping the old centroid).
+            // If a centroid has no assignments, leave it in place (rare edge
+            // case at low sample rates; matches Go's behaviour).
         }
 
         eprintln!("  k-means iter {}/{iters}", iter + 1);
@@ -295,21 +384,12 @@ fn assign_all(
     centroids: &[[f32; DIMS]],
     clusters: &mut Vec<Vec<Entry>>,
 ) -> Result<usize, Box<dyn std::error::Error>> {
-    let reader = open_gz(path)?;
+    let reader = open_gz_array(path)?;
     let mut total = 0usize;
 
-    for line in reader.lines() {
-        let line = line?;
-        let line = line.trim();
-        if line == "[" || line == "]" || line.is_empty() {
-            continue;
-        }
-        let line = line.strip_suffix(',').unwrap_or(line);
-        if line.is_empty() {
-            continue;
-        }
-
-        let rec: RefLine = serde_json::from_str(line)?;
+    let stream = serde_json::Deserializer::from_reader(reader).into_iter::<RefLine>();
+    for result in stream {
+        let rec = result?;
         if rec.vector.len() < DIMS {
             continue;
         }
@@ -365,7 +445,6 @@ fn write_index(
     }
 
     // --- Cluster offsets: [num_centroids + 1] u64 ---
-    // Each entry is a vector index (not a byte offset).
     // offsets[i]..offsets[i+1] is the range of vectors in cluster i.
     // offsets[num_centroids] == num_vecs (sentinel).
     let mut offsets = vec![0u64; clusters.len() + 1];
@@ -437,7 +516,7 @@ fn squared_euclidean(a: &[f32; DIMS], b: &[f32; DIMS]) -> f32 {
 ///
 /// Note: the Go writer used `math.Round` instead of truncation. We match the
 /// Rust reader's formula exactly so query quantization and stored-vector
-/// quantization use the same rounding mode — this is what matters for recall.
+/// quantization use the same rounding mode.
 fn quantize_vec(v: &[f32; DIMS]) -> [i8; DIMS] {
     let mut out = [0i8; DIMS];
     for i in 0..DIMS {
@@ -564,11 +643,59 @@ mod tests {
         assert_eq!(nearest_centroid(&query, &centroids), 1);
     }
 
+    // --- JsonArrayUnwrapper ---
+
+    #[test]
+    fn unwrapper_strips_outer_brackets_and_emits_objects() {
+        let input = br#"[{"a":1},{"b":2}]"#;
+        let mut unwrapper = JsonArrayUnwrapper::new(input.as_slice());
+        let mut out = Vec::new();
+        unwrapper.read_to_end(&mut out).unwrap();
+        let s = std::str::from_utf8(&out).unwrap().trim().to_string();
+        // Should contain both objects separated by a space, no outer brackets.
+        assert!(s.contains(r#"{"a":1}"#), "got: {s}");
+        assert!(s.contains(r#"{"b":2}"#), "got: {s}");
+        assert!(!s.starts_with('['), "should not start with [, got: {s}");
+    }
+
+    #[test]
+    fn unwrapper_preserves_commas_inside_arrays_in_objects() {
+        // The "vector" field is an array — its commas must NOT be replaced.
+        let input = br#"[{"vector":[1,2,3],"label":"ok"}]"#;
+        let mut unwrapper = JsonArrayUnwrapper::new(input.as_slice());
+        let mut out = Vec::new();
+        unwrapper.read_to_end(&mut out).unwrap();
+        let s = std::str::from_utf8(&out).unwrap();
+        assert!(s.contains("[1,2,3]"), "nested array commas must be preserved, got: {s}");
+    }
+
+    #[test]
+    fn unwrapper_single_element_array() {
+        let input = br#"[{"x":42}]"#;
+        let mut unwrapper = JsonArrayUnwrapper::new(input.as_slice());
+        let mut out = Vec::new();
+        unwrapper.read_to_end(&mut out).unwrap();
+        let parsed: serde_json::Value = serde_json::from_slice(&out).unwrap();
+        assert_eq!(parsed["x"], 42);
+    }
+
+    #[test]
+    fn unwrapper_multiple_elements_parseable_as_stream() {
+        let input = br#"[{"vector":[0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0,0.0,0.0,0.0,0.0],"label":"legit"},{"vector":[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0],"label":"fraud"}]"#;
+        let unwrapper = JsonArrayUnwrapper::new(input.as_slice());
+        let records: Vec<RefLine> = serde_json::Deserializer::from_reader(unwrapper)
+            .into_iter::<RefLine>()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].label, "legit");
+        assert_eq!(records[1].label, "fraud");
+    }
+
     // --- write_index header contract ---
 
     #[test]
     fn write_index_header_magic_and_layout() {
-        // Build a minimal index: 1 centroid, 1 vector.
         let centroids: Vec<[f32; DIMS]> = vec![[0.0f32; DIMS]];
         let entry = Entry {
             vec: [0i8; DIMS],
@@ -576,7 +703,6 @@ mod tests {
         };
         let clusters: Vec<Vec<Entry>> = vec![vec![entry]];
 
-        // Write to an in-memory buffer via a temp file trick.
         let tmp = tempfile::NamedTempFile::new().expect("tempfile");
         let path = tmp.path().to_str().unwrap();
 
@@ -605,7 +731,6 @@ mod tests {
 
     #[test]
     fn write_index_cluster_offsets_sentinel() {
-        // offsets[num_centroids] must equal num_vecs (the sentinel).
         let centroids: Vec<[f32; DIMS]> = vec![[0.0f32; DIMS], [1.0f32; DIMS]];
         let clusters: Vec<Vec<Entry>> = vec![
             vec![Entry { vec: [0i8; DIMS], is_fraud: false }],
@@ -624,7 +749,6 @@ mod tests {
 
         // offset_off = 32 + num_centroids * DIMS * 4
         let offset_off = 32 + 2 * DIMS * 4;
-        // 3 offset entries (num_centroids + 1 = 3)
         let off0 = u64::from_le_bytes(bytes[offset_off..offset_off + 8].try_into().unwrap());
         let off1 =
             u64::from_le_bytes(bytes[offset_off + 8..offset_off + 16].try_into().unwrap());
@@ -638,7 +762,6 @@ mod tests {
 
     #[test]
     fn write_index_vectors_sorted_by_cluster() {
-        // Vectors for cluster 0 must appear before cluster 1's vectors.
         let centroids: Vec<[f32; DIMS]> = vec![[0.0f32; DIMS], [1.0f32; DIMS]];
         let clusters: Vec<Vec<Entry>> = vec![
             vec![Entry {
@@ -667,12 +790,9 @@ mod tests {
 
         // vec_off = 32 + num_centroids * DIMS * 4 + (num_centroids + 1) * 8
         let vec_off = 32 + 2 * DIMS * 4 + 3 * 8;
-        // First vector (cluster 0): first byte should be 10 as i8 → 10u8.
         assert_eq!(bytes[vec_off] as i8, 10, "cluster-0 vector first byte");
-        // Second vector (cluster 1): first byte should be 20.
         assert_eq!(bytes[vec_off + DIMS] as i8, 20, "cluster-1 vector first byte");
 
-        // Labels: cluster 0 = legit (0), cluster 1 = fraud (1).
         let label_off = vec_off + 2 * DIMS;
         assert_eq!(bytes[label_off], 0, "cluster-0 label = legit");
         assert_eq!(bytes[label_off + 1], 1, "cluster-1 label = fraud");
@@ -681,7 +801,6 @@ mod tests {
     #[test]
     fn kmeans_produces_k_centroids() {
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        // 20 synthetic 14-dim vectors, k=3.
         let sample: Vec<[f32; DIMS]> = (0..20)
             .map(|i| {
                 let mut v = [0f32; DIMS];
