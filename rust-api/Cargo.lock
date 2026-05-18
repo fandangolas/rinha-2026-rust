@@ -409,6 +409,8 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "chrono",
+ "hyper",
+ "hyper-util",
  "memmap2",
  "serde",
  "serde_json",

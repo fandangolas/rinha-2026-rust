@@ -1,0 +1,69 @@
+name: rinha-2026-nolimits-k6
+
+# Same stack as local-k6 but with NO cpu/memory limits.
+# Goal: isolate how much of the p99 is pure throttling vs other overhead
+# (Docker networking, HAProxy, JSON parsing, etc.).
+
+services:
+  haproxy:
+    image: haproxy:3.0-alpine
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "9999:9999"
+    depends_on:
+      api1:
+        condition: service_healthy
+      api2:
+        condition: service_healthy
+    networks:
+      - backend
+
+  api1:
+    image: fandangolas/rinha-2026-api-rust:latest
+    environment:
+      IVF_PROBES: "${IVF_PROBES:-3}"
+      TOKIO_WORKER_THREADS: "${TOKIO_WORKER_THREADS:-1}"
+    healthcheck:
+      test: ["CMD", "/bin/bash", "-c", "exec 3<>/dev/tcp/localhost/9999 && printf 'GET /ready HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200"]
+      interval: 5s
+      timeout: 2s
+      retries: 12
+      start_period: 15s
+    networks:
+      - backend
+
+  # Direct-access port on api1 so we can bypass HAProxy and measure raw API latency.
+  api1-direct:
+    image: fandangolas/rinha-2026-api-rust:latest
+    environment:
+      IVF_PROBES: "${IVF_PROBES:-3}"
+      TOKIO_WORKER_THREADS: "${TOKIO_WORKER_THREADS:-1}"
+    ports:
+      - "9998:9999"
+    healthcheck:
+      test: ["CMD", "/bin/bash", "-c", "exec 3<>/dev/tcp/localhost/9999 && printf 'GET /ready HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200"]
+      interval: 5s
+      timeout: 2s
+      retries: 12
+      start_period: 15s
+    networks:
+      - backend
+
+  api2:
+    image: fandangolas/rinha-2026-api-rust:latest
+    environment:
+      IVF_PROBES: "${IVF_PROBES:-3}"
+      TOKIO_WORKER_THREADS: "${TOKIO_WORKER_THREADS:-1}"
+    healthcheck:
+      test: ["CMD", "/bin/bash", "-c", "exec 3<>/dev/tcp/localhost/9999 && printf 'GET /ready HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200"]
+      interval: 5s
+      timeout: 2s
+      retries: 12
+      start_period: 15s
+    networks:
+      - backend
+
+networks:
+  backend:
+    driver: bridge

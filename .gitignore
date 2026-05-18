@@ -13,3 +13,7 @@
 # test data
 /tmp/
 rinha-api-bin
+
+# k6 local test artifacts (large files, not committed)
+test/test-data.json
+test/results.json

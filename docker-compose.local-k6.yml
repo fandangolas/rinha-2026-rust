@@ -1,21 +1,15 @@
-name: rinha-2026-rust
+name: rinha-2026-local-k6
 
-# Same CFS settings as the Go setup: 2ms period, 50% quota → max stall 1ms.
-# Rust has no GC, so GOGC/GOMEMLIMIT/GOMAXPROCS are irrelevant.
-# TOKIO_WORKER_THREADS=1 limits the async runtime to 1 OS thread,
-# equivalent to GOMAXPROCS=1 — minimises context-switch overhead under
-# fractional CPU quota.
-# Total: 0.50 + 0.50 + 0.50 = 1.50 CPU (challenge limit).
-#
-# HAProxy ↔ API communication uses Unix Domain Sockets (UDS) over the
-# shared 'sockets' volume.  No TCP ports are exposed by the API containers.
+# Local k6 test harness — mirrors contest resource limits exactly.
+# Uses the pre-built image (data baked in); no host volume mounts.
+# cpu_period=2000µs, cpu_quota=1000µs → 50% of one core per service.
+# Total: 0.50 + 0.50 + 0.50 = 1.50 CPU  (challenge limit).
 
 services:
   haproxy:
     image: haproxy:3.0-alpine
     volumes:
-      - ./haproxy.uds.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
-      - sockets:/sockets
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     ports:
       - "9999:9999"
     depends_on:
@@ -33,19 +27,16 @@ services:
       - backend
 
   api1:
+    build:
+      context: .
+      dockerfile: Dockerfile.rust
     image: fandangolas/rinha-2026-api-rust:latest
     environment:
       IVF_PROBES: "${IVF_PROBES:-3}"
       TOKIO_WORKER_THREADS: "${TOKIO_WORKER_THREADS:-1}"
-      SOCKET_PATH: /sockets/api1.sock
       METRICS: "${METRICS:-false}"
-    volumes:
-      - sockets:/sockets
     healthcheck:
-      # The API creates the socket file only after it is fully initialised and
-      # listening.  HAProxy then performs the actual HTTP health check (GET /ready)
-      # through the socket before marking the server as up.
-      test: ["CMD", "sh", "-c", "test -S /sockets/api1.sock"]
+      test: ["CMD", "/bin/bash", "-c", "exec 3<>/dev/tcp/localhost/9999 && printf 'GET /ready HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200"]
       interval: 5s
       timeout: 2s
       retries: 12
@@ -60,16 +51,16 @@ services:
       - backend
 
   api2:
+    build:
+      context: .
+      dockerfile: Dockerfile.rust
     image: fandangolas/rinha-2026-api-rust:latest
     environment:
       IVF_PROBES: "${IVF_PROBES:-3}"
       TOKIO_WORKER_THREADS: "${TOKIO_WORKER_THREADS:-1}"
-      SOCKET_PATH: /sockets/api2.sock
       METRICS: "${METRICS:-false}"
-    volumes:
-      - sockets:/sockets
     healthcheck:
-      test: ["CMD", "sh", "-c", "test -S /sockets/api2.sock"]
+      test: ["CMD", "/bin/bash", "-c", "exec 3<>/dev/tcp/localhost/9999 && printf 'GET /ready HTTP/1.0\\r\\n\\r\\n' >&3 && head -1 <&3 | grep -q 200"]
       interval: 5s
       timeout: 2s
       retries: 12
@@ -82,10 +73,6 @@ services:
           memory: "160MB"
     networks:
       - backend
-
-volumes:
-  sockets:
-    driver: local
 
 networks:
   backend:
