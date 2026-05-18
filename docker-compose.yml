@@ -15,7 +15,11 @@ name: rinha-2026-rust
 #   total:   0.050 + 0.475 + 0.475 = 1.000 CPU ✓
 #
 # HAProxy ↔ API: Unix Domain Sockets over shared 'sockets' volume.
-# No TCP ports exposed by the API containers.
+# HAProxy's internal UDS backend check (option httpchk GET /ready,
+# rise 1, inter 2s) is the only readiness gate — no docker healthcheck
+# on the APIs, no `condition: service_healthy` on haproxy. This avoids
+# the `docker compose up --wait` timeout failure mode where the API
+# isn't healthy at the docker layer fast enough.
 
 services:
   haproxy:
@@ -25,11 +29,15 @@ services:
       - sockets:/sockets
     ports:
       - "9999:9999"
+    # Plain start-order dependency, NOT service_healthy. The judge runs
+    # `docker compose up --wait`; if a docker healthcheck doesn't pass
+    # before --wait-timeout fires, the whole stack aborts with
+    # "dependency apiX failed to start". HAProxy doesn't need a docker
+    # healthcheck on the APIs anyway — its own `option httpchk GET /ready`
+    # over UDS gates traffic routing (rise 1 → backends UP within ~2s).
     depends_on:
-      api1:
-        condition: service_healthy
-      api2:
-        condition: service_healthy
+      - api1
+      - api2
     cpu_period: 20000
     cpu_quota: 1000
     deploy:
@@ -46,12 +54,6 @@ services:
       TOKIO_WORKER_THREADS: "2"
     volumes:
       - sockets:/sockets
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:9999/ready"]
-      interval: 5s
-      timeout: 2s
-      retries: 12
-      start_period: 15s
     cpu_period: 4000
     cpu_quota: 1900
     deploy:
@@ -68,12 +70,6 @@ services:
       TOKIO_WORKER_THREADS: "2"
     volumes:
       - sockets:/sockets
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:9999/ready"]
-      interval: 5s
-      timeout: 2s
-      retries: 12
-      start_period: 15s
     cpu_period: 4000
     cpu_quota: 1900
     deploy:
