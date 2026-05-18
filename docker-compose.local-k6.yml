@@ -2,9 +2,9 @@ name: rinha-2026-local-k6
 
 # Local k6 test harness — mirrors contest resource limits exactly.
 # Uses the pre-built image (data baked in); no host volume mounts.
-# haproxy: period=10000µs quota=1000µs → 10% CPU  (Tw=0ms; ~0.9% actual use)
-# api1/2:  period=2000µs  quota=1400µs → 70% CPU each
-# Total: 0.10 + 0.70 + 0.70 = 1.50 CPU  (challenge limit).
+# haproxy: period=20000µs quota=1000µs →  5% CPU  (Tw=0ms; ~0.9% actual use)
+# api1/2:  period=2000µs  quota=1450µs → 72.5% CPU each
+# Total: 0.05 + 0.725 + 0.725 = 1.50 CPU  (challenge limit).
 
 services:
   haproxy:
@@ -18,7 +18,7 @@ services:
         condition: service_healthy
       api2:
         condition: service_healthy
-    cpu_period: 10000
+    cpu_period: 20000
     cpu_quota: 1000
     deploy:
       resources:
@@ -43,7 +43,7 @@ services:
       retries: 12
       start_period: 15s
     cpu_period: 2000
-    cpu_quota: 1400
+    cpu_quota: 1450
     deploy:
       resources:
         limits:
@@ -67,7 +67,7 @@ services:
       retries: 12
       start_period: 15s
     cpu_period: 2000
-    cpu_quota: 1400
+    cpu_quota: 1450
     deploy:
       resources:
         limits:
