@@ -68,7 +68,7 @@ if [[ $BUILD -eq 1 ]]; then
   docker compose -f "${COMPOSE_FILE}" build
 else
   echo ""
-  echo "pulling fandangolas/rinha-2026-api-rust:latest…"
+  echo "pulling nsilveira/rinha-2026-api-rust:latest…"
   docker compose -f "${COMPOSE_FILE}" pull api1 2>/dev/null || \
     docker compose -f "${COMPOSE_FILE}" pull || true
 fi

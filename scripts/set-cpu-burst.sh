@@ -71,8 +71,15 @@ set_burst() {
 
   local old
   old=$(cat "$burst_file" 2>/dev/null || echo "?")
-  echo "$BURST_US" > "$burst_file"
-  echo "  ${name}: ${old} µs → ${BURST_US} µs   [${burst_file}]"
+  # Use 'sudo tee' so the write runs as root — a plain shell redirect runs as
+  # the calling user (deployer) which has no write access to the cgroup fs.
+  # The sudoers rule "deployer ALL=(ALL) NOPASSWD: /usr/bin/tee /sys/fs/cgroup/*"
+  # allows this without a password prompt.
+  if echo "$BURST_US" | sudo tee "$burst_file" >/dev/null 2>&1; then
+    echo "  ${name}: ${old} µs → ${BURST_US} µs   [${burst_file}]"
+  else
+    echo "  [fail] ${name} — could not write ${burst_file} (try: sudo ./scripts/set-cpu-burst.sh)"
+  fi
 }
 
 echo "Setting cpu.cfs_burst_us=${BURST_US} µs on all rinha containers…"
