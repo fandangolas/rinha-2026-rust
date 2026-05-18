@@ -119,6 +119,24 @@ async fn main() {
     let socket_path = env_var("SOCKET_PATH", "");
 
     if !socket_path.is_empty() {
+        // UDS mode: HAProxy connects via Unix socket.
+        // Also bind a TCP listener on 9999 for Docker health checks —
+        // debian:bookworm-slim has no bash, so /dev/tcp tricks don't work.
+        // wget (installed in the image) hits this TCP port instead.
+        let port = env_var("PORT", "9999");
+        let health_addr = format!("0.0.0.0:{port}");
+        let health_app = Router::new()
+            .route("/ready", get(ready));
+        let health_listener = tokio::net::TcpListener::bind(&health_addr)
+            .await
+            .unwrap_or_else(|e| panic!("bind health-tcp {health_addr}: {e}"));
+        eprintln!("health check on tcp:{health_addr}");
+        tokio::spawn(async move {
+            axum::serve(health_listener, health_app)
+                .await
+                .expect("health server error");
+        });
+
         serve_uds(app, &socket_path, probes).await;
     } else {
         serve_tcp(app, probes).await;
