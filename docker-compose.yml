@@ -43,7 +43,7 @@ services:
     volumes:
       - sockets:/sockets
     healthcheck:
-      test: ["CMD", "sh", "-c", "test -S /sockets/api1.sock"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:9999/ready"]
       interval: 5s
       timeout: 2s
       retries: 12
@@ -65,7 +65,7 @@ services:
     volumes:
       - sockets:/sockets
     healthcheck:
-      test: ["CMD", "sh", "-c", "test -S /sockets/api2.sock"]
+      test: ["CMD", "wget", "-qO-", "http://localhost:9999/ready"]
       interval: 5s
       timeout: 2s
       retries: 12
