@@ -8,6 +8,7 @@
 # Usage:
 #   ./scripts/run-k6.sh              # pull pre-built image + run test
 #   ./scripts/run-k6.sh --build      # build image locally (slow; needs internet)
+#   METRICS=true ./scripts/run-k6.sh # enable per-phase timing histograms
 #   IVF_PROBES=5 ./scripts/run-k6.sh # override number of IVF probe clusters
 #
 # NOTE: on macOS, Docker Desktop enforces cpu_period/cpu_quota through the
@@ -18,10 +19,9 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_DIR="${REPO_ROOT}/test"
-COMPOSE_FILE="${REPO_ROOT}/docker-compose.rust.yml"   # UDS + timing logs
+COMPOSE_FILE="${REPO_ROOT}/docker-compose.rust.yml"
 TEST_DATA_URL="https://raw.githubusercontent.com/zanfranceschi/rinha-de-backend-2026/main/test/test-data.json"
 BUILD=0
-BURST_US="${BURST_US:-20000}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -96,24 +96,12 @@ if [[ $READY -eq 0 ]]; then
   exit 1
 fi
 
-# ── set CFS burst ─────────────────────────────────────────────────────────────
-# On Linux this requires root; on macOS Docker Desktop the cgroup FS is inside
-# the VM and the script skips gracefully.
-echo ""
-echo "applying cpu.cfs_burst_us=${BURST_US} µs…"
-if [[ "$(uname)" == "Linux" ]]; then
-  "${REPO_ROOT}/scripts/set-cpu-burst.sh" "${BURST_US}" || \
-    echo "  (burst setting failed — run with sudo if needed)"
-else
-  "${REPO_ROOT}/scripts/set-cpu-burst.sh" "${BURST_US}" 2>&1 || true
-fi
-
 # ── run k6 ───────────────────────────────────────────────────────────────────
 echo ""
 echo "════════════════════════════════════════════════════════════════"
 echo " Official k6 load test  |  ramp 1 → 900 RPS over 120s"
 echo " IVF_PROBES=${IVF_PROBES:-3}  TOKIO_WORKER_THREADS=${TOKIO_WORKER_THREADS:-1}"
-echo " BURST_US=${BURST_US}  METRICS=${METRICS:-false}"
+echo " METRICS=${METRICS:-false}"
 echo "════════════════════════════════════════════════════════════════"
 echo ""
 

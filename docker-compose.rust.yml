@@ -1,11 +1,15 @@
 name: rinha-2026-rust
 
-# Same CFS settings as the Go setup: 2ms period, 50% quota → max stall 1ms.
-# Rust has no GC, so GOGC/GOMEMLIMIT/GOMAXPROCS are irrelevant.
-# TOKIO_WORKER_THREADS=1 limits the async runtime to 1 OS thread,
-# equivalent to GOMAXPROCS=1 — minimises context-switch overhead under
-# fractional CPU quota.
-# Total: 0.50 + 0.50 + 0.50 = 1.50 CPU (challenge limit).
+# CPU budget: 1.50 cores total (challenge limit).
+# HAProxy is a pure proxy — it barely touches the CPU at 900 RPS.
+# We give the APIs the lion's share so they can handle load spikes
+# without hitting the CFS throttle as often.
+#
+#   haproxy: period=5000µs  quota=1000µs → 20% CPU  (max stall 4ms, but Tw=0ms in practice)
+#   api1:    period=2000µs  quota=1300µs → 65% CPU  (max stall 700µs, down from 1ms)
+#   api2:    period=2000µs  quota=1300µs → 65% CPU
+#   ─────────────────────────────────────────────────
+#   total:   0.20 + 0.65 + 0.65 = 1.50 CPU ✓
 #
 # HAProxy ↔ API communication uses Unix Domain Sockets (UDS) over the
 # shared 'sockets' volume.  No TCP ports are exposed by the API containers.
@@ -23,7 +27,7 @@ services:
         condition: service_healthy
       api2:
         condition: service_healthy
-    cpu_period: 2000
+    cpu_period: 5000
     cpu_quota: 1000
     deploy:
       resources:
@@ -51,7 +55,7 @@ services:
       retries: 12
       start_period: 15s
     cpu_period: 2000
-    cpu_quota: 1000
+    cpu_quota: 1300
     deploy:
       resources:
         limits:
@@ -75,7 +79,7 @@ services:
       retries: 12
       start_period: 15s
     cpu_period: 2000
-    cpu_quota: 1000
+    cpu_quota: 1300
     deploy:
       resources:
         limits:
