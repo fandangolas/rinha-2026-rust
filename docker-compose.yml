@@ -35,6 +35,8 @@ services:
           memory: "160MB"
     networks:
       - backend
+    environment:
+      - TOKIO_WORKER_THREADS=2
 
   api2:
     image: nsilveira/rinha-2026-api-rust:latest
@@ -51,6 +53,8 @@ services:
           memory: "160MB"
     networks:
       - backend
+    environment:
+      - TOKIO_WORKER_THREADS=2
 
 networks:
   backend:
