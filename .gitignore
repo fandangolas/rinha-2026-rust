@@ -12,3 +12,8 @@ rinha-api-bin
 test/test-data.json
 test/results.json
 test/results-direct.json
+
+# diagnostic harness artifacts (large, generated — not committed)
+test/results-diag.json
+test/diag-mismatches.jsonl
+test/diag-classified.jsonl
