@@ -11,6 +11,10 @@ path = "src/main.rs"
 name = "buildindex"
 path = "src/bin/buildindex.rs"
 
+[[bin]]
+name = "classify_mismatches"
+path = "src/bin/classify_mismatches.rs"
+
 [dependencies]
 axum = { version = "0.7", default-features = false, features = ["http1", "tokio", "matched-path", "query"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "io-util"] }
