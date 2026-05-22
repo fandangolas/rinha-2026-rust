@@ -5,7 +5,7 @@ name: rinha-2026-local-k6
 # so iteration on source code doesn't require pushing to Docker Hub.
 #
 # Knobs (override via env or .env file):
-#   IVF_PROBES            — search probes per query (default 3)
+#   IVF_PROBES            — search probes per query (default 75)
 #   TOKIO_WORKER_THREADS  — tokio runtime threads (default 2)
 #   METRICS               — true|false; gates per-phase histograms
 #                           and /metrics endpoint (default false)
@@ -40,7 +40,7 @@ services:
     image: nsilveira/rinha-2026-api-rust:latest
     environment:
       SOCKET_PATH: /sockets/api1.sock
-      IVF_PROBES: "${IVF_PROBES:-3}"
+      IVF_PROBES: "${IVF_PROBES:-75}"
       TOKIO_WORKER_THREADS: "${TOKIO_WORKER_THREADS:-2}"
       METRICS: "${METRICS:-false}"
     volumes:
@@ -61,7 +61,7 @@ services:
     image: nsilveira/rinha-2026-api-rust:latest
     environment:
       SOCKET_PATH: /sockets/api2.sock
-      IVF_PROBES: "${IVF_PROBES:-3}"
+      IVF_PROBES: "${IVF_PROBES:-75}"
       TOKIO_WORKER_THREADS: "${TOKIO_WORKER_THREADS:-2}"
       METRICS: "${METRICS:-false}"
     volumes:

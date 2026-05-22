@@ -96,7 +96,7 @@ async fn main() {
     };
 
     let index_path = env_var("INDEX_PATH", "/data/index.ivf.bin");
-    let probes: usize = env_var("IVF_PROBES", "20")
+    let probes: usize = env_var("IVF_PROBES", "75")
         .parse()
         .expect("IVF_PROBES must be a positive integer");
     let searcher = search::Searcher::load(&index_path, probes)

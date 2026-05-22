@@ -11,6 +11,7 @@ pub struct Neighbor {
 
 pub struct Searcher {
     mmap: memmap2::Mmap,
+    raw_mmap: memmap2::Mmap,
     num_cents: usize,
     num_vecs: usize,
     probes: usize,
@@ -65,8 +66,27 @@ impl Searcher {
             .into());
         }
 
+        // Open and mmap index.raw_f32.bin
+        let raw_f32_path = if path.ends_with(".ivf.bin") {
+            path.replace(".ivf.bin", ".raw_f32.bin")
+        } else {
+            format!("{}.raw_f32.bin", path)
+        };
+        let raw_file = File::open(&raw_f32_path)?;
+        let raw_mmap = unsafe { MmapOptions::new().map(&raw_file)? };
+
+        if raw_mmap.len() < num_vecs * DIMS * 4 {
+            return Err(format!(
+                "raw float32 file too small: need {}, got {}",
+                num_vecs * DIMS * 4,
+                raw_mmap.len()
+            )
+            .into());
+        }
+
         Ok(Searcher {
             mmap,
+            raw_mmap,
             num_cents,
             num_vecs,
             probes: actual_probes,
@@ -91,9 +111,9 @@ impl Searcher {
                 self.num_cents + 1,
             )
         };
-        let vecs: &[i8] = unsafe {
+        let raw_vecs: &[f32] = unsafe {
             slice::from_raw_parts(
-                self.mmap[self.vec_off..].as_ptr() as *const i8,
+                self.raw_mmap.as_ptr() as *const f32,
                 self.num_vecs * DIMS,
             )
         };
@@ -125,10 +145,7 @@ impl Searcher {
                 a.dist.partial_cmp(&b.dist).unwrap_or(Ordering::Equal)
             });
 
-            // Step 2: quantize query to int8 for the inner-loop distance.
-            let q_int8: [i8; DIMS] = std::array::from_fn(|i| quantize(query[i]));
-
-            // Step 3: scan each probe cluster, maintain a max-heap of the k best.
+            // Step 2: scan each probe cluster, maintain a max-heap of the k best.
             buf.cands.clear();
 
             for probe_i in 0..probes {
@@ -137,8 +154,8 @@ impl Searcher {
                 let end = offsets[ci + 1] as usize;
 
                 for vi in start..end {
-                    let vec_slice = &vecs[vi * DIMS..(vi + 1) * DIMS];
-                    let d = dist_int8(vec_slice, &q_int8);
+                    let vec_slice = &raw_vecs[vi * DIMS..(vi + 1) * DIMS];
+                    let d = dist_f32(vec_slice, query);
                     let is_fraud = labels[vi] == 1;
 
                     if buf.cands.len() < k {
@@ -169,7 +186,7 @@ struct CentDist {
 
 #[derive(Clone, Copy)]
 struct Candidate {
-    dist: i32,
+    dist: f32,
     is_fraud: bool,
 }
 
@@ -187,7 +204,7 @@ thread_local! {
 
 #[inline(always)]
 fn quantize(f: f32) -> i8 {
-    let v = f * QUANT_SCALE;
+    let v = (f * QUANT_SCALE).round();
     if v > 127.0 {
         127
     } else if v < -127.0 {
@@ -197,13 +214,13 @@ fn quantize(f: f32) -> i8 {
     }
 }
 
-// Squared Euclidean distance in int8 space. The loop over a compile-time-known
+// Squared Euclidean distance in float32 space. The loop over a compile-time-known
 // length (DIMS=14) lets the compiler fully unroll and pipeline the 14 MACs.
 #[inline(always)]
-fn dist_int8(stored: &[i8], query: &[i8; DIMS]) -> i32 {
-    let mut sum = 0i32;
+fn dist_f32(stored: &[f32], query: &[f32; DIMS]) -> f32 {
+    let mut sum = 0.0f32;
     for i in 0..DIMS {
-        let d = stored[i] as i32 - query[i] as i32;
+        let d = stored[i] - query[i];
         sum += d * d;
     }
     sum

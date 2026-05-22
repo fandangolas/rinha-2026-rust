@@ -166,6 +166,7 @@ fn parse_args() -> Args {
 /// Fixed-size avoids per-entry heap allocation; ~15 bytes/entry.
 struct Entry {
     vec: [i8; DIMS],
+    vec_f32: [f32; DIMS],
     is_fraud: bool,
 }
 
@@ -400,6 +401,7 @@ fn assign_all(
         let ci = nearest_centroid(&v, centroids);
         let entry = Entry {
             vec: quantize_vec(&v),
+            vec_f32: v,
             is_fraud: rec.label == "fraud",
         };
         clusters[ci].push(entry);
@@ -480,6 +482,25 @@ fn write_index(
     }
 
     w.flush()?;
+
+    // --- Write raw f32 vectors to index.raw_f32.bin ---
+    let raw_f32_path = if path.ends_with(".ivf.bin") {
+        path.replace(".ivf.bin", ".raw_f32.bin")
+    } else {
+        format!("{}.raw_f32.bin", path)
+    };
+    eprintln!("writing raw f32 vectors to {raw_f32_path}...");
+    let raw_file = File::create(&raw_f32_path)?;
+    let mut raw_w = BufWriter::with_capacity(1 << 20, raw_file);
+    for cluster in clusters {
+        for entry in cluster {
+            for &f in &entry.vec_f32 {
+                raw_w.write_all(&f.to_le_bytes())?;
+            }
+        }
+    }
+    raw_w.flush()?;
+
     Ok(())
 }
 
@@ -527,7 +548,7 @@ fn quantize_vec(v: &[f32; DIMS]) -> [i8; DIMS] {
 
 #[inline(always)]
 fn quantize_scalar(f: f32) -> i8 {
-    let v = f * QUANT_SCALE;
+    let v = (f * QUANT_SCALE).round();
     if v > 127.0 {
         127
     } else if v < -127.0 {
@@ -573,17 +594,15 @@ mod tests {
     }
 
     #[test]
-    fn quantize_half_truncates_not_rounds() {
-        // 0.5 * 127.0 = 63.5; truncation → 63, not 64
-        assert_eq!(quantize_scalar(0.5), 63);
+    fn quantize_half_rounds_to_nearest() {
+        // 0.5 * 127.0 = 63.5; round-to-nearest → 64
+        assert_eq!(quantize_scalar(0.5), 64);
     }
 
     #[test]
     fn quantize_matches_search_rs_formula() {
-        // Verify we match the exact formula from search.rs: v as i8 (truncation).
         for &f in &[-0.9f32, -0.5, -0.1, 0.0, 0.1, 0.5, 0.9] {
-            let v = f * 127.0;
-            let expected = v as i8;
+            let expected = (f * 127.0).round() as i8;
             assert_eq!(
                 quantize_scalar(f),
                 expected,
@@ -607,8 +626,8 @@ mod tests {
         v[0] = 0.5;
         v[1] = -0.5;
         let q = quantize_vec(&v);
-        assert_eq!(q[0], 63);
-        assert_eq!(q[1], -63);
+        assert_eq!(q[0], 64);
+        assert_eq!(q[1], -64);
         for i in 2..DIMS {
             assert_eq!(q[i], 0);
         }
@@ -699,6 +718,7 @@ mod tests {
         let centroids: Vec<[f32; DIMS]> = vec![[0.0f32; DIMS]];
         let entry = Entry {
             vec: [0i8; DIMS],
+            vec_f32: [0f32; DIMS],
             is_fraud: false,
         };
         let clusters: Vec<Vec<Entry>> = vec![vec![entry]];
@@ -733,10 +753,10 @@ mod tests {
     fn write_index_cluster_offsets_sentinel() {
         let centroids: Vec<[f32; DIMS]> = vec![[0.0f32; DIMS], [1.0f32; DIMS]];
         let clusters: Vec<Vec<Entry>> = vec![
-            vec![Entry { vec: [0i8; DIMS], is_fraud: false }],
+            vec![Entry { vec: [0i8; DIMS], vec_f32: [0f32; DIMS], is_fraud: false }],
             vec![
-                Entry { vec: [1i8; DIMS], is_fraud: true },
-                Entry { vec: [2i8; DIMS], is_fraud: false },
+                Entry { vec: [1i8; DIMS], vec_f32: [0f32; DIMS], is_fraud: true },
+                Entry { vec: [2i8; DIMS], vec_f32: [0f32; DIMS], is_fraud: false },
             ],
         ];
         let num_vecs = 3u64;
@@ -770,6 +790,7 @@ mod tests {
                     a[0] = 10;
                     a
                 },
+                vec_f32: [0f32; DIMS],
                 is_fraud: false,
             }],
             vec![Entry {
@@ -778,6 +799,7 @@ mod tests {
                     a[0] = 20;
                     a
                 },
+                vec_f32: [0f32; DIMS],
                 is_fraud: true,
             }],
         ];
