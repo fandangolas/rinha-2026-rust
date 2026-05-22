@@ -111,12 +111,6 @@ impl Searcher {
                 self.num_cents + 1,
             )
         };
-        let vecs: &[i8] = unsafe {
-            slice::from_raw_parts(
-                self.mmap[self.vec_off..].as_ptr() as *const i8,
-                self.num_vecs * DIMS,
-            )
-        };
         let raw_vecs: &[f32] = unsafe {
             slice::from_raw_parts(
                 self.raw_mmap.as_ptr() as *const f32,
@@ -151,59 +145,30 @@ impl Searcher {
                 a.dist.partial_cmp(&b.dist).unwrap_or(Ordering::Equal)
             });
 
-            // Step 2: quantize query to int8 for the inner-loop distance.
-            let q_int8: [i8; DIMS] = std::array::from_fn(|i| quantize(query[i]));
+            // Step 2: scan each probe cluster, maintain a max-heap of the k best.
+            buf.cands.clear();
 
-            // Helper for timing
-            let m = crate::timing::ENABLED.load(std::sync::atomic::Ordering::Relaxed);
-            let t_i8 = m.then(std::time::Instant::now);
-
-            // Step 3: scan each probe cluster, maintain a max-heap of the top C best in i8 space.
-            buf.cands_i8.clear();
-            let c_size = 2000; // top 2000 candidates
-            
             for probe_i in 0..probes {
                 let ci = buf.cent_dists[probe_i].idx;
                 let start = offsets[ci] as usize;
                 let end = offsets[ci + 1] as usize;
 
                 for vi in start..end {
-                    let vec_slice = &vecs[vi * DIMS..(vi + 1) * DIMS];
-                    let d = dist_int8(vec_slice, &q_int8);
-                    
-                    if buf.cands_i8.len() < c_size {
-                        buf.cands_i8.push(CandidateI8 { dist: d, vi });
-                        if buf.cands_i8.len() == c_size {
-                            heapify_max_i8(&mut buf.cands_i8);
+                    let vec_slice = &raw_vecs[vi * DIMS..(vi + 1) * DIMS];
+                    let d = dist_f32(vec_slice, query);
+                    let is_fraud = labels[vi] == 1;
+
+                    if buf.cands.len() < k {
+                        buf.cands.push(Candidate { dist: d, is_fraud });
+                        if buf.cands.len() == k {
+                            heapify_max(&mut buf.cands);
                         }
-                    } else if d < buf.cands_i8[0].dist {
-                        buf.cands_i8[0] = CandidateI8 { dist: d, vi };
-                        sift_down_max_i8(&mut buf.cands_i8, 0);
+                    } else if d < buf.cands[0].dist {
+                        buf.cands[0] = Candidate { dist: d, is_fraud };
+                        sift_down_max(&mut buf.cands, 0);
                     }
                 }
             }
-            if let Some(t) = t_i8 { crate::timing::SEARCH_I8.record(t.elapsed().as_micros() as u64); }
-
-            let t_f32 = m.then(std::time::Instant::now);
-            // Step 4: re-score top C candidates using f32
-            buf.cands.clear();
-            for c_i8 in &buf.cands_i8 {
-                let vi = c_i8.vi;
-                let vec_slice = &raw_vecs[vi * DIMS..(vi + 1) * DIMS];
-                let d = dist_f32(vec_slice, query);
-                let is_fraud = labels[vi] == 1;
-
-                if buf.cands.len() < k {
-                    buf.cands.push(Candidate { dist: d, is_fraud });
-                    if buf.cands.len() == k {
-                        heapify_max(&mut buf.cands);
-                    }
-                } else if d < buf.cands[0].dist {
-                    buf.cands[0] = Candidate { dist: d, is_fraud };
-                    sift_down_max(&mut buf.cands, 0);
-                }
-            }
-            if let Some(t) = t_f32 { crate::timing::SEARCH_F32.record(t.elapsed().as_micros() as u64); }
 
             buf.cands
                 .iter()
@@ -225,23 +190,15 @@ struct Candidate {
     is_fraud: bool,
 }
 
-#[derive(Clone, Copy)]
-struct CandidateI8 {
-    dist: i32,
-    vi: usize,
-}
-
 struct SearchBuffer {
     cent_dists: Vec<CentDist>,
     cands: Vec<Candidate>,
-    cands_i8: Vec<CandidateI8>,
 }
 
 thread_local! {
     static BUF: RefCell<SearchBuffer> = RefCell::new(SearchBuffer {
         cent_dists: Vec::with_capacity(1024),
         cands: Vec::with_capacity(8),
-        cands_i8: Vec::with_capacity(2048),
     });
 }
 
@@ -255,16 +212,6 @@ fn quantize(f: f32) -> i8 {
     } else {
         v as i8
     }
-}
-
-#[inline(always)]
-fn dist_int8(stored: &[i8], query: &[i8; DIMS]) -> i32 {
-    let mut sum = 0i32;
-    for i in 0..DIMS {
-        let d = stored[i] as i32 - query[i] as i32;
-        sum += d * d;
-    }
-    sum
 }
 
 // Squared Euclidean distance in float32 space. The loop over a compile-time-known
@@ -287,33 +234,6 @@ fn heapify_max(h: &mut [Candidate]) {
 }
 
 fn sift_down_max(h: &mut [Candidate], mut i: usize) {
-    let n = h.len();
-    loop {
-        let mut largest = i;
-        let l = 2 * i + 1;
-        let r = 2 * i + 2;
-        if l < n && h[l].dist > h[largest].dist {
-            largest = l;
-        }
-        if r < n && h[r].dist > h[largest].dist {
-            largest = r;
-        }
-        if largest == i {
-            break;
-        }
-        h.swap(i, largest);
-        i = largest;
-    }
-}
-
-fn heapify_max_i8(h: &mut [CandidateI8]) {
-    let n = h.len();
-    for i in (0..n / 2).rev() {
-        sift_down_max_i8(h, i);
-    }
-}
-
-fn sift_down_max_i8(h: &mut [CandidateI8], mut i: usize) {
     let n = h.len();
     loop {
         let mut largest = i;

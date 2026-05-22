@@ -64,11 +64,7 @@ async fn fraud_score(State(state): State<Arc<AppState>>, body: Bytes) -> Respons
     let neighbors = state.searcher.search(&query, 5);
     if let Some(t) = t { timing::SEARCH.record(t.elapsed().as_micros() as u64); }
 
-    let mut fraud_count = neighbors.iter().filter(|n| n.is_fraud).count();
-
-    if req.id == "tx-1753927113" {
-        fraud_count = 3;
-    }
+    let fraud_count = neighbors.iter().filter(|n| n.is_fraud).count();
 
     if let Some(t) = t_total { timing::TOTAL.record(t.elapsed().as_micros() as u64); }
 
