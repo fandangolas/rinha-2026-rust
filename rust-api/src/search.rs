@@ -11,7 +11,6 @@ pub struct Neighbor {
 
 pub struct Searcher {
     mmap: memmap2::Mmap,
-    raw_mmap: memmap2::Mmap,
     num_cents: usize,
     num_vecs: usize,
     probes: usize,
@@ -21,8 +20,6 @@ pub struct Searcher {
     label_off: usize,
 }
 
-// SAFETY: memmap2::Mmap is already Send+Sync (read-only MAP_SHARED mapping).
-// All other fields are plain usize. No interior mutability exposed.
 unsafe impl Send for Searcher {}
 unsafe impl Sync for Searcher {}
 
@@ -66,27 +63,8 @@ impl Searcher {
             .into());
         }
 
-        // Open and mmap index.raw_f32.bin
-        let raw_f32_path = if path.ends_with(".ivf.bin") {
-            path.replace(".ivf.bin", ".raw_f32.bin")
-        } else {
-            format!("{}.raw_f32.bin", path)
-        };
-        let raw_file = File::open(&raw_f32_path)?;
-        let raw_mmap = unsafe { MmapOptions::new().map(&raw_file)? };
-
-        if raw_mmap.len() < num_vecs * DIMS * 4 {
-            return Err(format!(
-                "raw float32 file too small: need {}, got {}",
-                num_vecs * DIMS * 4,
-                raw_mmap.len()
-            )
-            .into());
-        }
-
         Ok(Searcher {
             mmap,
-            raw_mmap,
             num_cents,
             num_vecs,
             probes: actual_probes,
@@ -98,7 +76,6 @@ impl Searcher {
     }
 
     pub fn search(&self, query: &[f32; DIMS], k: usize) -> Vec<Neighbor> {
-        // SAFETY: offsets and sizes were validated in load().
         let cents: &[f32] = unsafe {
             slice::from_raw_parts(
                 self.mmap[self.cent_off..].as_ptr() as *const f32,
@@ -111,9 +88,9 @@ impl Searcher {
                 self.num_cents + 1,
             )
         };
-        let raw_vecs: &[f32] = unsafe {
+        let vecs_i8: &[i8] = unsafe {
             slice::from_raw_parts(
-                self.raw_mmap.as_ptr() as *const f32,
+                self.mmap[self.vec_off..].as_ptr() as *const i8,
                 self.num_vecs * DIMS,
             )
         };
@@ -121,8 +98,12 @@ impl Searcher {
 
         let probes = self.probes.min(self.num_cents);
 
+        let mut query_i8 = [0i8; DIMS];
+        for i in 0..DIMS {
+            query_i8[i] = quantize(query[i]);
+        }
+
         BUF.with_borrow_mut(|buf| {
-            // Step 1: compute distance to every centroid (float32 squared Euclidean).
             buf.cent_dists.clear();
             for i in 0..self.num_cents {
                 let c = &cents[i * DIMS..(i + 1) * DIMS];
@@ -134,8 +115,6 @@ impl Searcher {
                 buf.cent_dists.push(CentDist { idx: i, dist: d });
             }
 
-            // Partial sort: bring the `probes` nearest to the front, then sort the prefix.
-            // O(n) + O(probes log probes) — equivalent to Go's partialSortAsc.
             if probes < buf.cent_dists.len() {
                 buf.cent_dists.select_nth_unstable_by(probes - 1, |a, b| {
                     a.dist.partial_cmp(&b.dist).unwrap_or(Ordering::Equal)
@@ -145,7 +124,6 @@ impl Searcher {
                 a.dist.partial_cmp(&b.dist).unwrap_or(Ordering::Equal)
             });
 
-            // Step 2: scan each probe cluster, maintain a max-heap of the k best.
             buf.cands.clear();
 
             for probe_i in 0..probes {
@@ -154,8 +132,8 @@ impl Searcher {
                 let end = offsets[ci + 1] as usize;
 
                 for vi in start..end {
-                    let vec_slice = &raw_vecs[vi * DIMS..(vi + 1) * DIMS];
-                    let d = dist_f32(vec_slice, query);
+                    let vec_slice = &vecs_i8[vi * DIMS..(vi + 1) * DIMS];
+                    let d = dist_int8(vec_slice, &query_i8);
                     let is_fraud = labels[vi] == 1;
 
                     if buf.cands.len() < k {
@@ -186,7 +164,7 @@ struct CentDist {
 
 #[derive(Clone, Copy)]
 struct Candidate {
-    dist: f32,
+    dist: i32,
     is_fraud: bool,
 }
 
@@ -197,7 +175,7 @@ struct SearchBuffer {
 
 thread_local! {
     static BUF: RefCell<SearchBuffer> = RefCell::new(SearchBuffer {
-        cent_dists: Vec::with_capacity(1024),
+        cent_dists: Vec::with_capacity(5000),
         cands: Vec::with_capacity(8),
     });
 }
@@ -214,14 +192,12 @@ fn quantize(f: f32) -> i8 {
     }
 }
 
-// Squared Euclidean distance in float32 space. The loop over a compile-time-known
-// length (DIMS=14) lets the compiler fully unroll and pipeline the 14 MACs.
 #[inline(always)]
-fn dist_f32(stored: &[f32], query: &[f32; DIMS]) -> f32 {
-    let mut sum = 0.0f32;
+fn dist_int8(stored: &[i8], query: &[i8; DIMS]) -> i32 {
+    let mut sum = 0i32;
     for i in 0..DIMS {
-        let d = stored[i] - query[i];
-        sum += d * d;
+        let diff = stored[i] as i32 - query[i] as i32;
+        sum += diff * diff;
     }
     sum
 }

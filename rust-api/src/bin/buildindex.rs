@@ -489,7 +489,6 @@ fn write_index(
     } else {
         format!("{}.raw_f32.bin", path)
     };
-    eprintln!("writing raw f32 vectors to {raw_f32_path}...");
     let raw_file = File::create(&raw_f32_path)?;
     let mut raw_w = BufWriter::with_capacity(1 << 20, raw_file);
     for cluster in clusters {
