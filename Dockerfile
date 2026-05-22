@@ -16,10 +16,10 @@ RUN cargo build --release --locked --offline --bins && \
     ./target/release/buildindex \
         -in  /data/references.json.gz \
         -out /data/index.ivf.bin \
-        -centroids 1000 \
+        -centroids 5000 \
         -sample    0.1 \
         -iters     20 \
-        -probes    75
+        -probes    15
 
 # Stage 2: minimal runtime image
 FROM debian:bookworm-slim
@@ -33,7 +33,7 @@ COPY --from=builder /data/index.raw_f32.bin        /data/index.raw_f32.bin
 COPY --from=builder /data/mcc_risk.json            /data/mcc_risk.json
 COPY --from=builder /data/normalization.json       /data/normalization.json
 ENV INDEX_PATH=/data/index.ivf.bin
-ENV IVF_PROBES=75
-ENV TOKIO_WORKER_THREADS=1
+ENV IVF_PROBES=15
+ENV TOKIO_WORKER_THREADS=2
 EXPOSE 9999
 CMD ["rinha-api"]

@@ -121,11 +121,6 @@ impl Searcher {
 
         let probes = self.probes.min(self.num_cents);
 
-        let mut q_int8 = [0i8; DIMS];
-        for i in 0..DIMS {
-            q_int8[i] = quantize(query[i]);
-        }
-
         BUF.with_borrow_mut(|buf| {
             // Step 1: compute distance to every centroid (float32 squared Euclidean).
             buf.cent_dists.clear();
@@ -150,9 +145,8 @@ impl Searcher {
                 a.dist.partial_cmp(&b.dist).unwrap_or(Ordering::Equal)
             });
 
-            // Step 2: scan each probe cluster using i8 pre-filter
-            buf.cands_i8.clear();
-            let c_size = 400; // Candidates to keep for f32 re-scoring
+            // Step 2: scan each probe cluster, maintain a max-heap of the k best.
+            buf.cands.clear();
 
             for probe_i in 0..probes {
                 let ci = buf.cent_dists[probe_i].idx;
@@ -160,45 +154,19 @@ impl Searcher {
                 let end = offsets[ci + 1] as usize;
 
                 for vi in start..end {
-                    let vec_slice: &[i8] = unsafe { 
-                        slice::from_raw_parts(self.mmap.as_ptr().add(self.vec_off + vi * DIMS) as *const i8, DIMS) 
-                    };
-                    let d = dist_int8(vec_slice, &q_int8);
-                    
-                    buf.cands_i8.push(CandidateI8 { dist: d, vi });
+                    let vec_slice = &raw_vecs[vi * DIMS..(vi + 1) * DIMS];
+                    let d = dist_f32(vec_slice, query);
+                    let is_fraud = labels[vi] == 1;
 
-                    if buf.cands_i8.len() >= 4000 {
-                        buf.cands_i8.select_nth_unstable_by(c_size, |a, b| {
-                            a.dist.cmp(&b.dist)
-                        });
-                        buf.cands_i8.truncate(c_size);
+                    if buf.cands.len() < k {
+                        buf.cands.push(Candidate { dist: d, is_fraud });
+                        if buf.cands.len() == k {
+                            heapify_max(&mut buf.cands);
+                        }
+                    } else if d < buf.cands[0].dist {
+                        buf.cands[0] = Candidate { dist: d, is_fraud };
+                        sift_down_max(&mut buf.cands, 0);
                     }
-                }
-            }
-
-            if buf.cands_i8.len() > c_size {
-                buf.cands_i8.select_nth_unstable_by(c_size, |a, b| {
-                    a.dist.cmp(&b.dist)
-                });
-                buf.cands_i8.truncate(c_size);
-            }
-
-            // Step 3: f32 re-score
-            buf.cands.clear();
-            for cand_i8 in &buf.cands_i8 {
-                let vi = cand_i8.vi;
-                let vec_slice = &raw_vecs[vi * DIMS..(vi + 1) * DIMS];
-                let d = dist_f32(vec_slice, query);
-                let is_fraud = labels[vi] == 1;
-
-                if buf.cands.len() < k {
-                    buf.cands.push(Candidate { dist: d, is_fraud });
-                    if buf.cands.len() == k {
-                        heapify_max(&mut buf.cands);
-                    }
-                } else if d < buf.cands[0].dist {
-                    buf.cands[0] = Candidate { dist: d, is_fraud };
-                    sift_down_max(&mut buf.cands, 0);
                 }
             }
 
@@ -222,22 +190,14 @@ struct Candidate {
     is_fraud: bool,
 }
 
-#[derive(Clone, Copy)]
-struct CandidateI8 {
-    dist: i32,
-    vi: usize,
-}
-
 struct SearchBuffer {
     cent_dists: Vec<CentDist>,
-    cands_i8: Vec<CandidateI8>,
     cands: Vec<Candidate>,
 }
 
 thread_local! {
     static BUF: RefCell<SearchBuffer> = RefCell::new(SearchBuffer {
         cent_dists: Vec::with_capacity(1024),
-        cands_i8: Vec::with_capacity(4096),
         cands: Vec::with_capacity(8),
     });
 }
@@ -252,16 +212,6 @@ fn quantize(f: f32) -> i8 {
     } else {
         v as i8
     }
-}
-
-#[inline(always)]
-fn dist_int8(stored: &[i8], query: &[i8; DIMS]) -> i32 {
-    let mut sum = 0i32;
-    for i in 0..DIMS {
-        let d = (stored[i] as i32) - (query[i] as i32);
-        sum += d * d;
-    }
-    sum
 }
 
 // Squared Euclidean distance in float32 space. The loop over a compile-time-known
