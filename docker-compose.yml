@@ -28,6 +28,11 @@ services:
       - sockets:/sockets
     ports:
       - "9999:9999"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9999/ready"]
+      interval: 1s
+      timeout: 1s
+      retries: 30
     depends_on:
       - api1
       - api2
