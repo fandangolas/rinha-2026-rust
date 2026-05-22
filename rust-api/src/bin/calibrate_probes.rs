@@ -50,7 +50,7 @@ fn main() {
     println!("Vectorization done in {:.2}s", t_vec.elapsed().as_secs_f32());
 
     // Try different probe values
-    let probe_values = [70, 71, 72, 73, 74, 75];
+    let probe_values = [75];
     for &probes in &probe_values {
         println!("\nTesting IVF search with probes = {}...", probes);
         let searcher = search::Searcher::load(index_path, probes).unwrap();
