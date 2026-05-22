@@ -46,7 +46,7 @@ services:
       - backend
 
   api1:
-    image: nsilveira/rinha-2026-api-rust:latest
+    image: nsilveira/rinha-2026-api-rust:v2
     environment:
       SOCKET_PATH: /sockets/api1.sock
       TOKIO_WORKER_THREADS: "2"
@@ -62,7 +62,7 @@ services:
       - backend
 
   api2:
-    image: nsilveira/rinha-2026-api-rust:latest
+    image: nsilveira/rinha-2026-api-rust:v2
     environment:
       SOCKET_PATH: /sockets/api2.sock
       TOKIO_WORKER_THREADS: "2"
