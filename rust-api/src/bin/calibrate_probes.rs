@@ -5,6 +5,8 @@ use std::{fs::File, io::BufReader, time::Instant};
 mod vectorize;
 #[path = "../search.rs"]
 mod search;
+#[path = "../timing.rs"]
+pub mod timing;
 
 #[derive(Deserialize)]
 struct TestData {

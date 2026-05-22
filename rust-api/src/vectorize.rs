@@ -18,6 +18,7 @@ pub struct Normalization {
 // Only fields we actually use are deserialized; serde ignores unknown JSON keys.
 #[derive(Deserialize)]
 pub struct Request {
+    pub id: String,
     pub transaction: Transaction,
     pub customer: Customer,
     pub merchant: Merchant,
