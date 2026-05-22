@@ -19,7 +19,7 @@ RUN cargo build --release --locked --offline --bins && \
         -centroids 1000 \
         -sample    0.1 \
         -iters     20 \
-        -probes    3
+        -probes    75
 
 # Stage 2: minimal runtime image
 FROM debian:bookworm-slim
@@ -29,10 +29,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/rinha-api /usr/local/bin/rinha-api
 COPY --from=builder /data/index.ivf.bin            /data/index.ivf.bin
+COPY --from=builder /data/index.raw_f32.bin        /data/index.raw_f32.bin
 COPY --from=builder /data/mcc_risk.json            /data/mcc_risk.json
 COPY --from=builder /data/normalization.json       /data/normalization.json
 ENV INDEX_PATH=/data/index.ivf.bin
-ENV IVF_PROBES=3
+ENV IVF_PROBES=75
 ENV TOKIO_WORKER_THREADS=1
 EXPOSE 9999
 CMD ["rinha-api"]
