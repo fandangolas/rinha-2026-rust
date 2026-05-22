@@ -87,6 +87,8 @@ impl PhaseStats {
 pub static PARSE:     PhaseStats = PhaseStats::new("parse");
 pub static VECTORIZE: PhaseStats = PhaseStats::new("vectorize");
 pub static SEARCH:    PhaseStats = PhaseStats::new("search");
+pub static SEARCH_I8: PhaseStats = PhaseStats::new("search_i8");
+pub static SEARCH_F32: PhaseStats = PhaseStats::new("search_f32");
 pub static TOTAL:     PhaseStats = PhaseStats::new("total");
 
 // ── /metrics response ─────────────────────────────────────────────────────
@@ -100,11 +102,15 @@ pub fn report_all() -> String {
     out += "# parse      = serde_json::from_slice  (JSON → Request struct)\n";
     out += "# vectorize  = feature extraction      (Request → [f32; 14])\n";
     out += "# search     = IVF k-NN search         (centroid scan + cluster scan)\n";
+    out += "# search_i8  = 2-stage search: i8 pre-filter loop\n";
+    out += "# search_f32 = 2-stage search: f32 re-score loop\n";
     out += "# total      = full handler wall time  (parse + vectorize + search + overhead)\n";
     out += "#\n";
     out += &PARSE.report();
     out += &VECTORIZE.report();
     out += &SEARCH.report();
+    out += &SEARCH_I8.report();
+    out += &SEARCH_F32.report();
     out += &TOTAL.report();
     out += "\n";
     out += &cfs_stats();

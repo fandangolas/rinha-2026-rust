@@ -154,6 +154,10 @@ impl Searcher {
             // Step 2: quantize query to int8 for the inner-loop distance.
             let q_int8: [i8; DIMS] = std::array::from_fn(|i| quantize(query[i]));
 
+            // Helper for timing
+            let m = crate::timing::ENABLED.load(std::sync::atomic::Ordering::Relaxed);
+            let t_i8 = m.then(std::time::Instant::now);
+
             // Step 3: scan each probe cluster, maintain a max-heap of the top C best in i8 space.
             buf.cands_i8.clear();
             let c_size = 2000; // top 2000 candidates
@@ -178,7 +182,9 @@ impl Searcher {
                     }
                 }
             }
+            if let Some(t) = t_i8 { crate::timing::SEARCH_I8.record(t.elapsed().as_micros() as u64); }
 
+            let t_f32 = m.then(std::time::Instant::now);
             // Step 4: re-score top C candidates using f32
             buf.cands.clear();
             for c_i8 in &buf.cands_i8 {
@@ -197,6 +203,7 @@ impl Searcher {
                     sift_down_max(&mut buf.cands, 0);
                 }
             }
+            if let Some(t) = t_f32 { crate::timing::SEARCH_F32.record(t.elapsed().as_micros() as u64); }
 
             buf.cands
                 .iter()
