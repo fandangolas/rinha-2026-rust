@@ -36,11 +36,10 @@ services:
     depends_on:
       - api1
       - api2
-    cpu_period: 20000
-    cpu_quota: 1000
     deploy:
       resources:
         limits:
+          cpus: "0.05"
           memory: "25MB"
     networks:
       - backend
@@ -52,11 +51,10 @@ services:
       TOKIO_WORKER_THREADS: "2"
     volumes:
       - sockets:/sockets
-    cpu_period: 4000
-    cpu_quota: 1900
     deploy:
       resources:
         limits:
+          cpus: "0.475"
           memory: "160MB"
     networks:
       - backend
@@ -68,11 +66,10 @@ services:
       TOKIO_WORKER_THREADS: "2"
     volumes:
       - sockets:/sockets
-    cpu_period: 4000
-    cpu_quota: 1900
     deploy:
       resources:
         limits:
+          cpus: "0.475"
           memory: "160MB"
     networks:
       - backend
